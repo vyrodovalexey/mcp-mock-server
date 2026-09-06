@@ -248,7 +248,6 @@ jobs:
   # build on any finding (the target passes --exit-code 1). This is a real,
   # gating scan: the target FAILS CLOSED if the binary is somehow absent.
   # ===========================================================================
-
   secrets-check:
     name: Secret Scan
     runs-on: ubuntu-latest
