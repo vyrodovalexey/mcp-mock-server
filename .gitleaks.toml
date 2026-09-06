@@ -1,0 +1,75 @@
+# gitleaks configuration — TASK-CI-002
+# ---------------------------------------------------------------------------
+# Purpose: enforce specification/security.md:133-136 ("no secrets in source"),
+# gated by `make secrets-check`, while suppressing exactly six documented
+# golden-test-vector FALSE POSITIVES — and nothing more.
+#
+# Pinned scanner: gitleaks v8.30.1 (ci.yml:23, ci.yml:273). This config was
+# authored and validated against that exact version's schema.
+#
+# Auto-discovery: `make secrets-check` runs `gitleaks detect --source .` from
+# the repository root. gitleaks v8.30.1 auto-loads `(--source)/.gitleaks.toml`
+# when no --config/-c flag and no GITLEAKS_CONFIG* env var is set
+# (cmd/root.go initConfig, lines 178-190). No Makefile --config flag is needed.
+#
+# CRITICAL FOOTGUN — DEFAULT RULESET PRESERVATION:
+# A custom .gitleaks.toml REPLACES the built-in ruleset unless it explicitly
+# extends the defaults. The `[extend] useDefault = true` below re-loads the
+# entire built-in v8.30.1 ruleset (config.go:250 -> extendDefault). Removing
+# this line would silently disable EVERY detection rule and produce a green,
+# worthless gate. Do not remove it.
+
+title = "mcpmock secret scan config (TASK-CI-002)"
+
+[extend]
+  # Load the complete built-in gitleaks v8.30.1 ruleset. This config ADDS one
+  # narrowly-scoped allowlist on top of the defaults; it does not define or
+  # replace any detection rule. Verified: rule count with this config == rule
+  # count of the built-in default config (see TASK-CI-002 report §3).
+  useDefault = true
+
+# ---------------------------------------------------------------------------
+# ALLOWLIST: golden determinism vectors (ADR-002) — documented false positives
+# ---------------------------------------------------------------------------
+# WHY THIS IS SAFE:
+#   internal/determinism/testdata/vectors.json holds GOLDEN determinism vectors
+#   (file header line 2; ADR-002). The six flagged `"key"` values on lines
+#   11,15,19,23,27,31 are HKDF derivation OUTPUTS for a fixed, PUBLISHED test
+#   seed (line 3, seed=81985529216486895), asserted by
+#   specification/test-strategy.md:92. They are deterministic test fixtures with
+#   NO external validity — not credentials. The file itself is change-controlled:
+#   ADR-002 makes editing any value a BREAKING change, so the scanner's
+#   knowledge is fixed here rather than the data (TASK-CI-002 scope constraint).
+#
+# WHY THIS IS NARROW (defence in depth — three independent constraints, all
+# required by condition = "and"):
+#   1. targetRules  — this allowlist can ONLY ever affect the `generic-api-key`
+#                     rule. Every other built-in rule (AWS keys, PEM headers,
+#                     OpenSSH keys, GitHub/GitLab tokens, ...) is untouched and
+#                     still fires anywhere, including in this same file.
+#   2. paths        — matches ONLY internal/determinism/testdata/vectors.json.
+#                     A generic-api-key finding in any other file still fails.
+#   3. regexes      — matches ONLY the exact golden-vector shape: a value that
+#                     is EXACTLY 64 lowercase hex characters. Tested against the
+#                     found secret (regexTarget defaults to the secret). A
+#                     differently-shaped credential (e.g. an AWS access key, a
+#                     JWT, a base64 blob) committed into this same file is NOT
+#                     64-lowercase-hex, so it is NOT allowlisted and still fails.
+#
+#   With condition = "and", a finding is suppressed ONLY when the rule is
+#   generic-api-key AND the path matches AND the secret is exactly 64-hex.
+#   (gitleaks v8.30.1 detect.go checkFindingAllowed: allTrue(path,regex).)
+#
+# RE-EVALUATION: if vectors.json is ever removed, or the derivation shape
+# changes, or these values stop being golden fixtures, delete this allowlist
+# and re-run `make secrets-check`.
+[[allowlists]]
+  description = "ADR-002 golden determinism vectors: 64-hex HKDF outputs for a fixed published test seed; test fixtures, not credentials (security.md:131, test-strategy.md:92)"
+  targetRules = ["generic-api-key"]
+  condition = "and"
+  # Only this one file. Anchored to end-of-string; forward-slash path as gitleaks
+  # reports it (relative to --source root).
+  paths = ['''(^|/)internal/determinism/testdata/vectors\.json$''']
+  # Only the exact golden-vector shape: exactly 64 lowercase hex chars, anchored.
+  # Anything not matching this remains a finding.
+  regexes = ['''^[0-9a-f]{64}$''']

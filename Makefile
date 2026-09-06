@@ -148,9 +148,18 @@ test-integration: ## Run the -tags=integration suite (ci.yml:222)
 	go test -race -covermode=atomic -coverprofile=$(COVER_DIR)/integration.out -tags=integration -timeout=5m ./test/integration/...
 
 .PHONY: test-e2e
-test-e2e: ## Run the -tags=e2e suite (ci.yml:281)
+# test/e2e/ contains ONLY the nested module test/e2e/embed (its own go.mod, with
+# a replace => ../../.. onto this working tree). Go's ./... never descends into a
+# nested module, so the old root-relative `./test/e2e/...` matched zero packages
+# and reported a false green. We invoke the nested module directly with `go -C`,
+# mirroring the established precedent in `globals-check` (Makefile:261).
+#
+# -C changes the working directory BEFORE flags are resolved, so -coverprofile is
+# relative to test/e2e/embed. We pass an ABSOLUTE path built from $(CURDIR) so the
+# profile still lands in the root coverage/ dir where CI collects it.
+test-e2e: ## Run the -tags=e2e suite in the nested test/e2e/embed module (ci.yml e2e-tests)
 	@mkdir -p $(COVER_DIR)
-	go test -race -covermode=atomic -coverprofile=$(COVER_DIR)/e2e.out -tags=e2e -timeout=5m ./test/e2e/...
+	go -C test/e2e/embed test -race -covermode=atomic -coverprofile=$(CURDIR)/$(COVER_DIR)/e2e.out -tags=e2e -timeout=5m ./...
 
 .PHONY: test-perf
 test-perf: ## Run the -tags=perf Go benchmarks

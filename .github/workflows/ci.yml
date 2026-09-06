@@ -369,7 +369,11 @@ jobs:
           MCPMOCK_E2E_METRICS_URL: http://127.0.0.1:9090
         run: |
           if [ -d test/e2e ]; then
-            go test -race -coverprofile=coverage-e2e.out -covermode=atomic -tags=e2e -timeout=5m ./test/e2e/...
+            # Single source of truth: delegate to the Makefile target, which
+            # invokes the nested test/e2e/embed module via `go -C` (Go's ./...
+            # never descends into a nested module). Coverage lands at
+            # coverage/e2e.out — see the Upload step below.
+            make test-e2e
           else
             echo "NOTE: test/e2e/ not present yet (arrives with later Phase-1 tasks)."
             echo "      Skipping - the job is wired and will gate once the suite lands."
@@ -384,10 +388,10 @@ jobs:
 
       - name: Upload E2E coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && hashFiles('coverage-e2e.out') != ''
+        if: always() && hashFiles('coverage/e2e.out') != ''
         with:
           name: coverage-e2e
-          path: coverage-e2e.out
+          path: coverage/e2e.out
           retention-days: 7
           if-no-files-found: ignore
 
