@@ -1,0 +1,22 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "_meta": {
+      "serverInfo": {
+        "name": "mcpmock",
+        "version": "0.1.0"
+      }
+    },
+    "content": [
+      {
+        "text": "slept 0ms",
+        "type": "text"
+      }
+    ],
+    "resultType": "toolResult",
+    "structuredContent": {
+      "sleptMs": 0
+    }
+  }
+}

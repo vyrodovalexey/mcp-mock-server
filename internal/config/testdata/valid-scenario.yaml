@@ -1,0 +1,35 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: happy-path
+  description: A minimal valid Phase 1 scenario.
+  labels:
+    tier: smoke
+  coversRequirements:
+    - MOCK-701
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  discover:
+    instructions: hello from mcpmock
+  switches:
+    validateMeta: strict
+  catalogue:
+    tools:
+      count: 10
+    items:
+      - name: echo-tool
+        kind: tool
+        description: echoes its arguments
+        inputSchema:
+          type: object
+          properties:
+            zeta: { type: string }
+            alpha: { type: integer }
+  journal:
+    enabled: true
+    bodies: full

@@ -1,0 +1,1 @@
+{"id":1,"jsonrpc":"2.0","method":"tools/call","nums":[1,1,1,0,1.5,100000000000000000000000],"params":{"_meta":{"clientCapabilities":{},"protocolVersion":"1"},"arguments":{"a":"x<y>&z","z":1},"name":"echo"}}

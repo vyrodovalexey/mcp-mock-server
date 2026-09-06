@@ -1,0 +1,14 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: typo-overlay
+extends:
+  - base.yaml
+spec:
+  # A typo introduced through the overlay path. Post-composition schema
+  # validation must still reject it (additionalProperties: false survives
+  # composition), or a misspelling would slip in exactly where it is hardest
+  # to spot.
+  catalogyo:
+    tools:
+      count: 1

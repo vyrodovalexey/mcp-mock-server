@@ -1,0 +1,853 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcpmock.dev/schema/v1alpha1/scenario.schema.json",
+  "title": "mcpmock scenario document",
+  "description": "MOCK-701 / MOCK-703 / \u00a710.3. Composition semantics are described by the x-mcpmock-merge-key and x-mcpmock-merge annotations on every object-bearing array; see ADR-008. Fields documented as 'emitted verbatim' are deliberately NOT validated (MOCK-222/224/225).",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "required": ["apiVersion", "kind"],
+  "properties": {
+    "apiVersion": { "const": "mcpmock.dev/v1alpha1" },
+    "kind": { "enum": ["Scenario", "Fleet"] },
+    "extends": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Documents merged left to right before this one. Paths are relative to the including file and must stay within --scenario-root.",
+      "x-mcpmock-merge": "replace"
+    },
+    "metadata": { "$ref": "#/$defs/metadata" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "Scenario" } }, "required": ["kind"] },
+      "then": { "properties": { "spec": { "$ref": "#/$defs/instanceSpec" } }, "required": ["spec"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "Fleet" } }, "required": ["kind"] },
+      "then": { "properties": { "spec": { "$ref": "#/$defs/fleetSpec" } }, "required": ["spec"] }
+    }
+  ],
+
+  "$defs": {
+
+    "metadata": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$" },
+        "description": { "type": "string" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+        "coversRequirements": {
+          "type": "array", "items": { "type": "string", "pattern": "^MOCK-[0-9]{3}$" },
+          "description": "Documentation only; used to generate the scenario/requirement map (MOCK-705.3)."
+        }
+      }
+    },
+
+    "fleetSpec": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-103, MOCK-703, MOCK-904.",
+      "properties": {
+        "defaults": { "$ref": "#/$defs/instanceRef" },
+        "instances": {
+          "type": "array",
+          "x-mcpmock-merge-key": "name",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$" },
+              "mountPath": { "type": "string", "pattern": "^/" },
+              "extends": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+              "spec": { "$ref": "#/$defs/instanceSpec" }
+            }
+          }
+        },
+        "generate": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "MOCK-904: define N instances without copy-paste.",
+          "required": ["count"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 1, "maximum": 5000 },
+            "nameTemplate": { "type": "string", "default": "upstream-{{i:03d}}" },
+            "mountTemplate": { "type": "string", "default": "/mock/{{name}}/mcp" },
+            "extends": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+            "vary": {
+              "type": "array",
+              "x-mcpmock-merge-key": "path",
+              "description": "Deterministic per-instance variation; value i uses values[i % len(values)].",
+              "items": {
+                "type": "object",
+                "unevaluatedProperties": false,
+                "required": ["path", "values"],
+                "properties": {
+                  "path": { "type": "string", "description": "dotted path into instanceSpec" },
+                  "values": { "type": "array", "minItems": 1 }
+                }
+              }
+            }
+          }
+        },
+        "process": { "$ref": "#/$defs/process" }
+      }
+    },
+
+    "instanceRef": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "extends": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "spec": { "$ref": "#/$defs/instanceSpec" }
+      }
+    },
+
+    "process": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "Process-wide settings. Only meaningful on the top-level document.",
+      "properties": {
+        "seed": { "type": "integer", "minimum": 0, "description": "MOCK-704; --seed overrides." },
+        "determinism": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "strict": {
+              "type": "boolean", "default": false,
+              "description": "Serialise count-based fault triggers through the journal sequence so they are deterministic under concurrency. See ADR-009 and GAP-007."
+            },
+            "virtualClockEpoch": { "type": "string", "format": "date-time", "default": "2026-01-01T00:00:00Z" }
+          }
+        },
+        "control": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "addr": { "type": "string", "default": "127.0.0.1:9091" },
+            "socket": { "type": "string" },
+            "mutationRateLimitPerSecond": { "type": "integer", "default": 100 }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "addr": { "type": "string", "default": "127.0.0.1:9090" },
+            "shareControlListener": { "type": "boolean", "default": false },
+            "logLevel": { "enum": ["debug", "info", "warn", "error"], "default": "info" },
+            "maxMetricSeries": { "type": "integer", "default": 100000, "description": "ADR-016 cardinality ceiling; validation fails above it." },
+            "tracing": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean", "default": false },
+                "endpoint": { "type": "string", "description": "OTLP/HTTP endpoint" },
+                "sampleRatio": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 }
+              }
+            }
+          }
+        },
+        "shutdown": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "mode": { "enum": ["graceful", "abrupt", "hang"], "default": "graceful", "description": "MOCK-508.3" },
+            "drainTimeoutSeconds": { "type": "integer", "default": 10 }
+          }
+        },
+        "safeMode": { "type": "boolean", "default": false, "description": "ADR-018 third gate; default true in the container image via env." }
+      }
+    },
+
+    "instanceSpec": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "era": { "enum": ["modern", "legacy", "dual", "probe"], "default": "modern", "description": "MOCK-303" },
+        "legacyVersion": { "enum": ["2025-11-25", "2025-06-18", "2025-03-26"], "default": "2025-11-25" },
+        "transport": { "$ref": "#/$defs/transport" },
+        "discover": { "$ref": "#/$defs/discover" },
+        "switches": { "$ref": "#/$defs/switches" },
+        "catalogue": { "$ref": "#/$defs/catalogue" },
+        "paging": { "$ref": "#/$defs/paging" },
+        "mrtr": { "$ref": "#/$defs/mrtr" },
+        "subscriptions": { "$ref": "#/$defs/subscriptions" },
+        "sessions": { "$ref": "#/$defs/sessions" },
+        "auth": { "$ref": "#/$defs/auth" },
+        "faults": {
+          "type": "array",
+          "x-mcpmock-merge-key": "id",
+          "items": { "$ref": "#/$defs/faultRule" }
+        },
+        "journal": { "$ref": "#/$defs/journal" },
+        "hostile": { "$ref": "#/$defs/hostile" },
+        "process": { "$ref": "#/$defs/process" }
+      }
+    },
+
+    "transport": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-102, MOCK-106.",
+      "properties": {
+        "kinds": { "type": "array", "items": { "enum": ["http", "stdio"] }, "default": ["http"], "x-mcpmock-merge": "replace" },
+        "http": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "path": { "type": "string", "default": "/mcp", "pattern": "^/" },
+            "listener": { "enum": ["shared", "own"], "default": "shared", "description": "ADR-007; 'own' is required for accept-refusal and TLS-handshake faults." },
+            "addr": { "type": "string", "description": "only with listener: own" },
+            "forceHTTP1": { "type": "boolean", "default": false, "description": "Required by transport faults of kind reset/halfClose (ADR-012)." },
+            "tls": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean", "default": false },
+                "certFile": { "type": "string" },
+                "keyFile": { "type": "string" },
+                "ephemeral": { "type": "boolean", "default": false, "description": "Generate a throwaway CA + leaf at startup. No key material is ever committed." },
+                "clientAuth": { "enum": ["none", "request", "require-any", "verify-if-given", "require-and-verify"], "default": "none" },
+                "clientCAFile": { "type": "string" },
+                "minVersion": { "enum": ["1.2", "1.3"], "default": "1.2" },
+                "cipherSuites": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "discover": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-201. Field shapes are defined by contracts/wire-2026-07-28.md, which is UNRATIFIED (ADR-019 / GAP-003).",
+      "properties": {
+        "supportedVersions": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "capabilities": { "description": "emitted verbatim, including unknown extension keys (MOCK-201.2)" },
+        "instructions": { "type": "string" },
+        "serverInfo": { "description": "emitted verbatim" },
+        "ttlMs": { "type": ["integer", "null"] },
+        "cacheScope": { "type": ["string", "null"] }
+      }
+    },
+
+    "switches": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-202, MOCK-203, MOCK-204, MOCK-207, MOCK-209, MOCK-245, MOCK-257.",
+      "properties": {
+        "methods": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "default": true },
+              "hideFromCapabilities": { "type": "boolean", "default": false },
+              "shape": { "$ref": "#/$defs/shape" },
+              "ttlMs": { "type": ["integer", "null"] },
+              "cacheScope": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "validateMeta": {
+          "enum": ["strict", "lenient", "off"],
+          "default": "strict",
+          "description": "MOCK-203.5. strict = reject missing _meta.protocolVersion/clientCapabilities with -32602/400. lenient = ACCEPT but still compute the missing-field set, record it in the journal as metaValidation.missing, log WARN and count outcome=\"tolerated\"; relaxes ONLY the presence of those two fields, never structural well-formedness (a non-object _meta is still rejected). off = skip the check entirely; missing is not computed. Normative definition: requirements-spec.md MOCK-203, table \"switches.validateMeta — the three modes\" (AMEND-6)."
+        },
+        "validateHeaders": { "type": "boolean", "default": true },
+        "omitResultType": { "type": "boolean", "default": false },
+        "omitServerInfoMeta": { "type": "boolean", "default": false },
+        "exposeStateReason": { "type": "boolean", "default": true, "description": "ADR-010: put requestState rejection reason in error.data." },
+        "selfCheck": { "type": "boolean", "default": true, "description": "Validate every outgoing result against contracts/wire-2026-07-28.schema.json before emitting (ADR-017 \u00a75, MOCK-201.4). DEFAULT true \u2014 CONFIRMED by AMEND-10 (2026-09-04) against an implementation that resolved absent\u2192false. PRIN-5 requires that 'switches at defaults produces only self-check-passing responses', and MOCK-244.4 / MOCK-503.3 require the check be 'suppressible only by an explicit fault rule'; off-by-default suppresses it for everyone, silently. The hot-path objection does not apply: MOCK-901's benchmark conditions already specify 'self-check off' explicitly, so this default never costs the benchmark. Disabled automatically by deliberate-fault rules, and that suppression is journaled with the rule id." },
+        "nonConformant": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "Named spec violations (\u00a70.4). Every key here is a stable, documented name a hub test may cite.",
+          "properties": {
+            "mintSessionIdInModernMode": { "type": "boolean", "default": false },
+            "honourSessionHeaders": { "type": "boolean", "default": false },
+            "allowGetOnMcpPath": { "type": "boolean", "default": false },
+            "emitProgressWithoutToken": { "type": "boolean", "default": false },
+            "emitLogBelowRequestedLevel": { "type": "boolean", "default": false },
+            "emitUnsupportedInputRequest": { "type": "boolean", "default": false },
+            "omitSubscriptionAck": { "type": "boolean", "default": false },
+            "omitSubscriptionId": { "type": "boolean", "default": false },
+            "sendUnrequestedNotificationType": { "type": "boolean", "default": false },
+            "sendRequestScopedNotificationOnListenStream": { "type": "boolean", "default": false },
+            "multipleWwwAuthenticateChallenges": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    },
+
+    "shape": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-208.",
+      "properties": {
+        "mode": { "enum": ["json", "sse", "random"], "default": "json" },
+        "sseProbability": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 }
+      }
+    },
+
+    "catalogue": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-221..228. Generated items are virtual (ADR-004); only overrides cost memory.",
+      "properties": {
+        "tools": { "$ref": "#/$defs/generated" },
+        "prompts": { "$ref": "#/$defs/generated" },
+        "resources": { "$ref": "#/$defs/generated" },
+        "resourceTemplates": { "$ref": "#/$defs/generated" },
+        "ordering": { "enum": ["deterministic", "shuffled", "reversed", "byName"], "default": "deterministic" },
+        "collideWith": { "type": "string", "description": "MOCK-223.5: copy another instance's generated names into this overlay." },
+        "validationTimeoutMs": { "type": "integer", "default": 100, "description": "MOCK-225.7 / MOCK-606.4" },
+        "items": {
+          "type": "array",
+          "x-mcpmock-merge-key": "name",
+          "description": "MOCK-222: authored primitives. Replaces a generated item of the same name.",
+          "items": { "$ref": "#/$defs/authoredItem" }
+        },
+        "edgeCases": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "MOCK-223/224/225: named generators for edge-case primitives.",
+          "properties": {
+            "names": {
+              "type": "array",
+              "x-mcpmock-merge": "replace",
+              "items": { "enum": ["maxLength128", "overLength129", "withDots", "nonAscii", "astral", "sentinelLiteral", "collision"] }
+            },
+            "headerAnnotations": {
+              "type": "array",
+              "x-mcpmock-merge": "replace",
+              "items": { "enum": ["empty", "crlf", "duplicateCaseInsensitive", "onNumber", "underItems", "underOneOf", "underRef", "intOutOfSafeRange"] }
+            },
+            "schemas": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": {
+                "draft07": { "type": "boolean", "default": false },
+                "missingSchemaKeyword": { "type": "boolean", "default": false },
+                "loopbackRef": { "type": "boolean", "default": false },
+                "externalRef": { "type": "string", "format": "uri", "description": "Requires hostile.allowExternalRefs and an allowlist entry (ADR-018 \u00a77)." },
+                "nestingDepth": { "type": "integer", "minimum": 0, "maximum": 100000 },
+                "defsCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
+                "estimatedValidationOps": { "type": "integer", "description": "MOCK-225.6: composition-bomb sizing target, \u00b130%." }
+              }
+            }
+          }
+        },
+        "drift": {
+          "type": "array",
+          "x-mcpmock-merge-key": "id",
+          "description": "MOCK-227 / MOCK-233.",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["id", "target", "field"],
+            "properties": {
+              "id": { "type": "string" },
+              "target": { "type": "string" },
+              "kind": { "enum": ["tool", "prompt", "resource", "resourceTemplate"], "default": "tool" },
+              "field": { "enum": ["description", "inputSchema", "outputSchema", "annotations", "icons", "title"] },
+              "value": { "description": "emitted verbatim" },
+              "afterCalls": { "type": "integer" },
+              "afterSeconds": { "type": "number" },
+              "onControlTrigger": { "type": "boolean", "default": false },
+              "emitNotification": { "type": "boolean", "default": false, "description": "false + a long ttlMs is the MOCK-233 deceptive case." }
+            }
+          }
+        }
+      }
+    },
+
+    "generated": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "count": { "type": "integer", "minimum": 0, "maximum": 100000, "default": 0 },
+        "nameTemplate": { "type": "string", "default": "tool_{{i:05d}}" },
+        "descriptionWords": { "type": "integer", "default": 12 },
+        "schemaShape": { "enum": ["trivial", "small", "medium", "large"], "default": "small" },
+        "requiredScopes": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace", "description": "MOCK-228" },
+        "requiredClientCapabilities": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace", "description": "MOCK-206" }
+      }
+    },
+
+    "authoredItem": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["name"],
+      "description": "MOCK-222. inputSchema/outputSchema/annotations/icons are emitted VERBATIM and are deliberately not validated (MOCK-222.3, MOCK-224.3).",
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["tool", "prompt", "resource", "resourceTemplate"], "default": "tool" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "uri": { "type": "string", "description": "resources and templates" },
+        "icons": true,
+        "annotations": true,
+        "inputSchema": true,
+        "outputSchema": true,
+        "requiredScopes": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "requiredClientCapabilities": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "behavior": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "\u00a78 non-goal: no real tool side effects beyond echo/sleep/fail. Normative definition of the four kinds, including inputSchema/outputSchema, duration units, error shapes and determinism: contracts/builtin-tools.md (AMEND-2).",
+          "properties": {
+            "kind": { "enum": ["echo", "sleep", "fail", "canned"], "default": "echo" },
+
+            "echo": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "description": "kind=echo. builtin-tools.md \u00a72.",
+              "properties": {
+                "key": { "type": ["string", "null"], "default": null, "description": "If set, echo only arguments[key] instead of the whole arguments object. Absent key => -32602 with data.missing." },
+                "structured": { "type": "boolean", "default": true, "description": "Also emit structuredContent alongside the text content block." },
+                "prefix": { "type": "string", "default": "", "description": "Literal string prepended to the text block. Deterministic." }
+              }
+            },
+
+            "sleepMs": { "type": "integer", "minimum": 0, "default": 0, "description": "kind=sleep. DURATION IS MILLISECONDS. Default delay when the caller supplies no durationMs argument. builtin-tools.md \u00a73." },
+            "maxSleepMs": { "type": "integer", "minimum": 0, "default": 30000, "description": "kind=sleep. Upper bound on the EFFECTIVE delay, whether it came from sleepMs or from the caller's durationMs. Guards against a hub test wedging CI. builtin-tools.md \u00a73.3." },
+            "onExceedMaxSleep": { "enum": ["reject", "clamp"], "default": "reject", "description": "kind=sleep. reject => -32602 with data.{requestedMs,maxSleepMs}. clamp => sleep maxSleepMs and set _meta.clamped=true on the result. builtin-tools.md \u00a73.3." },
+            "allowClientDuration": { "type": "boolean", "default": true, "description": "kind=sleep. If false, arguments.durationMs is ignored and sleepMs always wins." },
+
+            "fail": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "description": "kind=fail. builtin-tools.md \u00a74.",
+              "properties": {
+                "mode": { "enum": ["toolError", "protocolError"], "default": "toolError", "description": "toolError => a SUCCESSFUL JSON-RPC result with isError:true (the MCP-native 'the tool ran and failed'). protocolError => a JSON-RPC error object (the call itself failed). Default is toolError; rationale in builtin-tools.md \u00a74.1." },
+                "code": { "type": "integer", "default": -32603, "description": "mode=protocolError only. JSON-RPC error code." },
+                "message": { "type": "string", "default": "mcpmock: deliberate failure", "description": "Error message in both modes." },
+                "data": { "description": "mode=protocolError only. Emitted verbatim as error.data." },
+                "allowClientOverride": { "type": "boolean", "default": false, "description": "If true, arguments.mode/code/message may override the configured values. Default false so a hub test cannot silently change server behaviour. builtin-tools.md \u00a74.4." }
+              }
+            },
+
+            "result": { "description": "kind=canned. Result emitted verbatim." },
+            "isError": { "type": "boolean", "default": false, "description": "kind=canned. Marks the canned result as a tool error." },
+            "shape": { "$ref": "#/$defs/shape" },
+            "progress": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": {
+                "count": { "type": "integer", "default": 0 },
+                "intervalMs": { "type": "integer", "default": 100 }
+              }
+            }
+          },
+          "allOf": [
+            { "if": { "properties": { "kind": { "const": "canned" } }, "required": ["kind"] }, "then": { "required": ["result"] } }
+          ]
+        }
+      }
+    },
+
+    "paging": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-231, MOCK-232.",
+      "properties": {
+        "pageSize": { "type": "integer", "minimum": 1, "default": 100 },
+        "cursorTTLSeconds": { "type": "integer", "default": 300 },
+        "perPage": {
+          "type": "array",
+          "x-mcpmock-merge-key": "page",
+          "description": "MOCK-232.2: different ttl/cacheScope on different pages.",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["page"],
+            "properties": {
+              "page": { "type": "integer", "minimum": 0 },
+              "ttlMs": { "type": ["integer", "null"] },
+              "cacheScope": { "type": ["string", "null"] },
+              "overlapPrevious": { "type": "integer", "default": 0 },
+              "skipItems": { "type": "integer", "default": 0 },
+              "error": { "$ref": "#/$defs/errorSpec" }
+            }
+          }
+        }
+      }
+    },
+
+    "mrtr": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-241..247.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "rounds": { "type": "integer", "minimum": -1, "default": 1, "description": "-1 = never completes (MOCK-241.2)" },
+        "methods": { "type": "array", "items": { "enum": ["tools/call", "resources/read", "prompts/get"] }, "x-mcpmock-merge": "replace" },
+        "namePattern": { "type": "string", "description": "restrict to matching primitives" },
+        "inputRequests": {
+          "type": "array",
+          "x-mcpmock-merge-key": "key",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["key", "type"],
+            "properties": {
+              "key": { "type": "string" },
+              "type": { "enum": ["elicitation/create", "sampling/createMessage", "roots/list"] },
+              "mode": { "enum": ["form", "url"], "description": "elicitation only (MOCK-242.1)" },
+              "params": { "description": "emitted verbatim" }
+            }
+          }
+        },
+        "emitRequestState": { "type": "boolean", "default": true },
+        "emitInputRequests": { "type": "boolean", "default": true },
+        "stateTTLSeconds": { "type": "integer", "default": 60 },
+        "stateTTLOverrideSeconds": { "type": "integer", "description": "0, negative or huge, for testing (MOCK-243)" },
+        "reask": { "enum": ["missing-only", "all"], "default": "missing-only", "description": "MOCK-246" },
+        "maxReasks": { "type": "integer", "default": 5 },
+        "enforceDistinctRetryIds": { "type": "boolean", "default": false, "description": "MOCK-247, tightened form" },
+        "pinStateKey": { "type": "boolean", "default": false, "description": "Derive the AEAD key from the seed so tokens are golden-stable. Test-only; logs a WARN (ADR-010)." }
+      }
+    },
+
+    "subscriptions": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-251..257.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "ackFirst": { "type": "boolean", "default": true },
+        "acceptedTypes": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace", "description": "MOCK-252: subset of the requested filter to acknowledge; omit to accept all." },
+        "refusedTypes": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "timers": {
+          "type": "array",
+          "x-mcpmock-merge-key": "id",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["id", "type", "intervalMs"],
+            "properties": {
+              "id": { "type": "string" },
+              "type": { "type": "string" },
+              "intervalMs": { "type": "integer", "minimum": 1 },
+              "uris": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+              "count": { "type": "integer", "description": "stop after N; omit for unbounded" }
+            }
+          }
+        },
+        "sse": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "keepAliveIntervalMs": { "type": "integer", "default": 15000, "description": "0 disables (MOCK-255.2)" },
+            "keepAliveText": { "type": "string", "default": "keepalive" },
+            "frameBuffer": { "type": "integer", "default": 16 }
+          }
+        },
+        "closure": { "enum": ["graceful", "abrupt", "halfClose", "stall"], "default": "graceful", "description": "MOCK-254" }
+      }
+    },
+
+    "sessions": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-301, MOCK-305.",
+      "properties": {
+        "issueSessionId": { "type": "boolean", "default": true },
+        "ttlSeconds": { "type": "integer" },
+        "invalidateAfterCalls": { "type": "integer" },
+        "inFlightOnInvalidate": { "enum": ["complete", "fail"], "default": "complete", "description": "GAP-020" },
+        "replayBufferSize": { "type": "integer", "default": 1000, "description": "Last-Event-ID replay (MOCK-301.7)" },
+        "onUnknownSession": { "$ref": "#/$defs/errorSpec" },
+        "probe": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "MOCK-304 era-probe behaviours.",
+          "properties": {
+            "mode": { "enum": ["normal", "bare400", "nonJson400", "jsonRpcError", "notFound404", "methodNotAllowed405", "timeout"], "default": "normal" },
+            "body": { "type": "string" },
+            "timeoutMs": { "type": "integer", "default": 30000 },
+            "thenClose": { "enum": ["graceful", "abrupt"], "default": "graceful" }
+          }
+        }
+      }
+    },
+
+    "auth": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-401..407. No secret literal in this file is ever logged or returned by the control API.",
+      "properties": {
+        "mode": { "enum": ["none", "bearer-static", "oauth-resource-server"], "default": "none" },
+        "staticTokensFile": { "type": "string", "description": "Preferred over inline tokens; no secrets in source (\u00a7constraints)." },
+        "staticTokens": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace", "description": "Test tokens only. Validation WARNS if a value looks like a real JWT." },
+        "resource": { "type": "string", "format": "uri", "description": "canonical URI for audience checks (MOCK-403)" },
+        "authorizationServers": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "scopesSupported": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "validateAudience": { "type": "boolean", "default": true },
+        "scopeMatch": { "enum": ["exact", "prefix"], "default": "exact", "description": "GAP-014" },
+        "echoCredential": { "type": "boolean", "default": true, "description": "MOCK-407; hashed, never raw." },
+        "embeddedServer": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "MOCK-405. Signing keys are generated at runtime; none is ever committed.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "algorithm": { "enum": ["ES256", "RS256"], "default": "ES256" },
+            "issuer": { "type": "string" },
+            "tokenTTLSeconds": { "type": "integer", "default": 300 },
+            "rfc9207Iss": { "enum": ["present", "absent", "mismatched"], "default": "present" },
+            "deterministicKeys": { "type": "boolean", "default": false, "description": "Derive the signing key from --seed for golden stability. Test-only; logs a WARN." },
+            "malform": {
+              "type": "array",
+              "x-mcpmock-merge": "replace",
+              "items": { "enum": ["alg-none", "alg-mismatch", "aud-string", "aud-array", "exp-past", "exp-absent", "exp-string", "nbf-future", "dup-claims", "bad-padding", "kid-unknown"] },
+              "description": "ADR-020 named malformations."
+            }
+          }
+        },
+        "expiry": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "description": "MOCK-406.",
+          "properties": {
+            "afterRequests": { "type": "integer" },
+            "atVirtualTime": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    },
+
+    "faultRule": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["id", "action"],
+      "description": "\u00a75 preamble: selector \u00d7 trigger \u00d7 action (ADR-009).",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "enabled": { "type": "boolean", "default": true },
+        "when": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "instance": { "type": "string" },
+            "method": { "type": "string" },
+            "name": { "type": "string" },
+            "era": { "type": "string" },
+            "phase": { "enum": ["connection", "request", "response", "stream"], "default": "response" },
+            "mrtrRound": { "type": "integer" },
+            "principal": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": { "scope": { "type": "string" }, "subject": { "type": "string" } }
+            }
+          }
+        },
+        "trigger": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "oneOf": [
+            { "required": ["probability"] },
+            { "required": ["count"] },
+            { "required": ["armed"] }
+          ],
+          "properties": {
+            "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "count": {
+              "type": "object",
+              "unevaluatedProperties": false,
+              "properties": {
+                "first": { "type": "integer", "minimum": 1 },
+                "afterN": { "type": "integer", "minimum": 1 },
+                "everyNth": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "armed": { "type": "boolean" }
+          }
+        },
+        "once": { "type": "boolean", "default": false },
+        "stopPropagation": { "type": "boolean", "default": false },
+        "action": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["latency", "transport", "protocol", "size", "error", "content", "corpus", "restart", "page"] }
+          },
+          "allOf": [
+            { "if": { "properties": { "kind": { "const": "latency" } } },
+              "then": { "required": ["latency"], "properties": { "kind": true, "latency": { "$ref": "#/$defs/latencyAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "transport" } } },
+              "then": { "required": ["transport"], "properties": { "kind": true, "transport": { "$ref": "#/$defs/transportAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "protocol" } } },
+              "then": { "required": ["protocol"], "properties": { "kind": true, "protocol": { "$ref": "#/$defs/protocolAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "size" } } },
+              "then": { "required": ["size"], "properties": { "kind": true, "size": { "$ref": "#/$defs/sizeAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "error" } } },
+              "then": { "required": ["error"], "properties": { "kind": true, "error": { "$ref": "#/$defs/errorSpec" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "content" } } },
+              "then": { "required": ["content"], "properties": { "kind": true, "content": { "$ref": "#/$defs/contentAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "corpus" } } },
+              "then": { "required": ["corpus"], "properties": { "kind": true, "corpus": { "$ref": "#/$defs/corpusAction" } }, "unevaluatedProperties": false } },
+            { "if": { "properties": { "kind": { "const": "restart" } } },
+              "then": { "required": ["restart"], "properties": { "kind": true, "restart": { "$ref": "#/$defs/restartAction" } }, "unevaluatedProperties": false } }
+          ]
+        }
+      }
+    },
+
+    "latencyAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-501.",
+      "properties": {
+        "mode": { "enum": ["fixed", "distribution", "percentile"], "default": "fixed" },
+        "fixedMs": { "type": "integer" },
+        "distribution": {
+          "type": "object",
+          "unevaluatedProperties": false,
+          "properties": {
+            "kind": { "enum": ["normal", "lognormal", "exponential"] },
+            "meanMs": { "type": "number" },
+            "stddevMs": { "type": "number" }
+          }
+        },
+        "percentiles": {
+          "type": "array",
+          "x-mcpmock-merge": "replace",
+          "items": {
+            "type": "object",
+            "unevaluatedProperties": false,
+            "required": ["p", "ms"],
+            "properties": { "p": { "type": "number", "minimum": 0, "maximum": 1 }, "ms": { "type": "integer" } }
+          }
+        },
+        "slowFirstByteMs": { "type": "integer" },
+        "slowSseEventMs": { "type": "integer" },
+        "stallAfterEvents": { "type": "integer" }
+      }
+    },
+
+    "transportAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-502. 'reset' and 'halfClose' require transport.http.forceHTTP1; 'acceptRefusal' and 'tlsHandshakeFailure' require listener: own.",
+      "properties": {
+        "kind": { "enum": ["reset", "halfClose", "truncate", "acceptRefusal", "tlsHandshakeFailure"] },
+        "truncateAtBytes": { "type": "integer" },
+        "tlsFailureMode": { "enum": ["wrongCert", "expiredCert", "unknownCA", "alert"] },
+        "durationMs": { "type": "integer", "description": "for acceptRefusal" }
+      }
+    },
+
+    "protocolAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-503.",
+      "properties": {
+        "kind": {
+          "enum": ["invalidJson", "idMismatch", "duplicateId", "nullId", "missingJsonrpc",
+                   "responseToNotification", "unsolicitedResponse", "unknownMethod",
+                   "wrongResultType", "unknownResultType", "inputRequiredOnUnsupportedMethod"]
+        },
+        "invalidJsonKind": { "enum": ["truncated", "extraComma", "nan", "duplicateKeys", "bom", "controlChars"] },
+        "resultTypeValue": { "type": "string" },
+        "rawBytesBase64": { "type": "string", "description": "escape hatch; emitted exactly (ADR-006 FrameRawBytes)" }
+      }
+    },
+
+    "sizeAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-504. Validation rejects bodies: full when bytes exceed journal.maxBytes/16 (ADR-005).",
+      "properties": {
+        "kind": { "enum": ["oversizedResult", "oversizedSseEvent", "manyContentBlocks", "deepStructuredContent"] },
+        "bytes": { "type": "integer" },
+        "blocks": { "type": "integer" },
+        "depth": { "type": "integer" }
+      }
+    },
+
+    "errorSpec": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-505, MOCK-306.",
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": ["string", "null"] },
+        "data": { "description": "emitted verbatim, any JSON type" },
+        "httpStatus": { "type": "integer", "minimum": 100, "maximum": 599 }
+      }
+    },
+
+    "contentAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-506. mcpmock never dereferences any URL it emits.",
+      "properties": {
+        "kind": { "enum": ["isError", "schemaViolation", "foreignUriScheme", "hostileIconUrl"] },
+        "violation": { "enum": ["wrongType", "missingRequired", "extraProperty", "wrongEnum"] },
+        "schemes": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "iconUrls": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" }
+      }
+    },
+
+    "corpusAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-507. Requires hostile.enabled and not --safe-mode (ADR-018).",
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "ids": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" },
+        "targets": { "type": "array", "items": { "enum": ["description", "annotations", "instructions", "title"] }, "x-mcpmock-merge": "replace" },
+        "wrap": { "type": "boolean", "default": true, "description": "Emit inside <<MCPMOCK-UNTRUSTED>> delimiters." }
+      }
+    },
+
+    "restartAction": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-508. Refused in embedded mode without WithAllowProcessExit (ADR-009).",
+      "properties": {
+        "kind": { "enum": ["exit", "hangShutdown"] },
+        "delayMs": { "type": "integer", "default": 0 },
+        "exitCode": { "type": "integer", "default": 1 },
+        "flushJournalTo": { "type": "string", "description": "path; write the journal as NDJSON before exit" }
+      }
+    },
+
+    "journal": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "MOCK-601, MOCK-602, MOCK-902 (ADR-005).",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "bodies": { "enum": ["full", "truncate", "digest", "off"], "default": "full" },
+        "truncateBytes": { "type": "integer", "default": 65536 },
+        "maxRecords": { "type": "integer", "default": 100000 },
+        "maxBytes": { "type": "integer", "default": 268435456 },
+        "maxBytesTotal": { "type": "integer", "default": 268435456, "description": "Fleet-wide budget divided across instances (ADR-007)." },
+        "overflow": { "enum": ["drop-oldest", "block", "error"], "default": "drop-oldest" },
+        "blockTimeoutMs": { "type": "integer", "default": 100, "description": "GAP-017: block degrades to drop-oldest after this." },
+        "validateArguments": { "type": "boolean", "default": true, "description": "MOCK-606; costs CPU on the MOCK-902 path." },
+        "preallocate": { "type": "boolean", "default": false }
+      }
+    },
+
+    "hostile": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "description": "ADR-018 first gate.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "allowExternalRefs": { "type": "boolean", "default": false },
+        "externalRefAllowlist": { "type": "array", "items": { "type": "string" }, "x-mcpmock-merge": "replace" }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpmock-metrics
+  namespace: mcpmock-test
+  labels:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+    app.kubernetes.io/part-of: mcpmock
+    app.kubernetes.io/component: metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: /metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

@@ -1,0 +1,17 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: meta-off
+  description: A scenario selecting off _meta validation (MOCK-203, AMEND-6).
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  switches:
+    validateMeta: "off"
+  journal:
+    enabled: true
+    bodies: full

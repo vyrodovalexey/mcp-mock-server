@@ -1,0 +1,270 @@
+# mcpmock Helm values — the supported contract (specification/deployment.md §4).
+# Anything not listed here is not supported. NO SECRET VALUE ever appears in this
+# file, in a template, or in NOTES.txt (security.md §3): a control token is always
+# supplied by reference to an existing Secret.
+
+# -- Container image.
+# Defaults are the LOCAL deploy contract (TASK-030 / TASK-034): the image
+# `mcpmock:dev-local` already lives in the Docker Desktop daemon, which the
+# docker-desktop Kubernetes cluster shares, so `IfNotPresent` resolves it with no
+# registry and no push. For a real registry, override repository + tag.
+image:
+  repository: mcpmock
+  # tag defaults to .Chart.AppVersion ONLY when it points at a registry image.
+  # For the local flow we pin dev-local explicitly so a bare `helm install`
+  # against docker-desktop works offline.
+  tag: "dev-local"
+  pullPolicy: IfNotPresent
+  # pullSecrets: referenced by name only, never inlined.
+  pullSecrets: []
+
+# -- Replica count. 1 by default. The journal is PER-PROCESS and PER-REPLICA
+# (deployment.md §1): >1 splits a test's evidence across pods and makes
+# assertions racy. Scaling above 1 is supported only for MOCK-508.2 rolling
+# restart testing and NOTES.txt warns loudly when you do.
+replicaCount: 1
+
+# -- Naming overrides.
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Scenario configuration (MOCK-701). Exactly ONE of `inline` or
+# `configMapName` must be set (chart guard §4.1.5). By default we ship a minimal
+# inline scenario so a bare `helm install` works.
+scenario:
+  # inline: rendered into a ConfigMap and mounted read-only at
+  # /etc/mcpmock/scenario.yaml. The default below is a valid minimal document.
+  inline:
+    apiVersion: mcpmock.dev/v1alpha1
+    kind: Scenario
+    metadata:
+      name: default
+    spec:
+      # transport is an OBJECT per specification/contracts/scenario.schema.json
+      # ($defs/transport): kinds is an array of transport enums, http carries the
+      # mount path. A bare string here is schema-invalid and fails validateOnStart
+      # (DEF-012). This is the minimal valid HTTP transport TASK-034 verified live.
+      transport:
+        kinds:
+          - http
+        http:
+          path: /mcp
+  # configMapName: reference an EXISTING ConfigMap instead of rendering `inline`.
+  # Set exactly one of inline / configMapName, never both, never neither.
+  configMapName: ""
+  # key: the ConfigMap key that holds the scenario document.
+  key: scenario.yaml
+  # validateOnStart: run `mcpmock validate` in an init container against the
+  # mounted scenario, so a bad scenario fails the rollout with a readable message
+  # instead of crash-looping (deployment.md §3.3).
+  validateOnStart: true
+
+# -- Root seed. "" (empty) = cryptographically random, printed at startup
+# (MOCK-704). Set a fixed uint64 string for reproducible runs.
+seed: ""
+
+# -- Log level: debug | info | warn | error.
+logLevel: info
+
+# -- MCP endpoint (to the hub under test).
+mcp:
+  port: 8080
+  # path is documentation only in Phase 1; the binary mounts instances at /mcp.
+  path: /mcp
+  service:
+    type: ClusterIP
+    annotations: {}
+  # TLS is Phase 11; the value block exists so the contract is stable, but
+  # enabling it in Phase 1 fails the guard in _helpers (not implemented).
+  tls:
+    enabled: false
+    secretName: ""
+    clientAuth: none
+    clientCASecretName: ""
+    minVersion: "1.2"
+
+# -- Control API (mutates the mock, reads the journal — security-sensitive).
+# DISABLED by default in-cluster: the binary refuses a non-loopback bind without
+# a token (TASK-023), and a default token in values.yaml is forbidden. To expose
+# control in-cluster you MUST set control.enabled=true AND supply a token by
+# reference in control.tokenSecretName — the chart fails otherwise (guard §4.1.2).
+control:
+  enabled: false
+  port: 9091
+  service:
+    type: ClusterIP
+  # tokenSecretName: name of an EXISTING Secret holding the bearer token. REQUIRED
+  # when control.enabled=true (the service is reachable off-loopback). Never a
+  # literal token.
+  tokenSecretName: ""
+  tokenSecretKey: token
+  networkPolicy:
+    # allowedNamespaces: namespaces permitted to reach the control port.
+    # empty = same namespace only.
+    allowedNamespaces: []
+
+# -- Metrics / health (to Prometheus + the kubelet probes). Always on: MOCK-105
+# requires /metrics, and the probes need /healthz and /readyz.
+metrics:
+  enabled: true
+  port: 9090
+  serviceMonitor:
+    # Disabled by default so the chart installs without the Prometheus operator
+    # / its CRDs present (Helm standard).
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# -- Tracing (OTLP/HTTP, no-op by default — ADR-016).
+tracing:
+  enabled: false
+  endpoint: ""
+  sampleRatio: 1.0
+  serviceName: mcpmock
+
+# -- Hostile corpus gate (ADR-018). Phase 9; MCPMOCK_SAFE_MODE=1 is baked into
+# the image. Enabling this WITHOUT networkPolicy.enabled fails the chart (guard
+# §4.1.1). Left off in Phase 1.
+hostile:
+  enabled: false
+
+# -- NetworkPolicy. Default-deny egress with a narrow allowlist; ingress limited
+# to the ports mcpmock actually serves and, for control, to permitted peers only.
+networkPolicy:
+  enabled: true
+  # denyAllEgress: emit a default-deny egress policy. mcpmock never fetches remote
+  # schemas ("emit but never fetch", GAP-016), so it needs no arbitrary egress.
+  denyAllEgress: true
+  # allowDNS: open UDP/TCP 53 egress to kube-dns so the pod can resolve names it
+  # is configured with. Kept explicit and narrow.
+  allowDNS: true
+  # allowTracingEgress: when tracing.enabled, open egress to the OTLP collector.
+  # Set the collector's namespace/port via the block below.
+  tracingEgress:
+    namespaceSelector: {}
+    podSelector: {}
+    port: 4318
+  # ingressFrom: additional ingress peers for the MCP port (podSelector /
+  # namespaceSelector list). Empty = allow same-namespace ingress to the MCP port.
+  ingressFrom: []
+
+# -- Resource requests / limits. Defaults are the `default` profile
+# (deployment.md §5): 1 instance, ≤100 tools, ≤100 streams. Sized from measured
+# facts: ~87 MiB for 200 instances, journal ring 8 MiB default, ~27.5 KiB per SSE
+# stream. 128Mi request / 256Mi limit comfortably covers the default workload.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+
+# -- Profile selector: default | large-fleet | many-streams | throughput.
+# `default` uses the resources above. Non-default profiles override resources via
+# the profile block below (deployment.md §5).
+profile: default
+profiles:
+  large-fleet:
+    resources:
+      requests: { cpu: 500m, memory: 512Mi }
+      limits:   { cpu: "2",  memory: 1Gi }
+  many-streams:
+    resources:
+      requests: { cpu: "2",   memory: 1536Mi }
+      limits:   { cpu: "4",   memory: 2Gi }
+  throughput:
+    resources:
+      requests: { cpu: "4",   memory: 256Mi }
+      limits:   { cpu: "4",   memory: 512Mi }
+
+# -- Pod-level security context. The image is distroless-nonroot + static, so all
+# of these hold; they are asserted, not assumed.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+
+# -- Probes. Point at the metrics listener (:9090) — verified reachable inside the
+# container. /healthz is liveness (ignores injected faults), /readyz is readiness
+# (503 during startup and shutdown drain). Paths are the PUBLISHED contract
+# (observability.md §5, ADR-016) — NOT /livez.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: metrics
+  initialDelaySeconds: 1
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: metrics
+  initialDelaySeconds: 1
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+startupProbe:
+  httpGet:
+    path: /readyz
+    port: metrics
+  # Startup is ~2ms measured; a generous window covers scheduling + image load.
+  initialDelaySeconds: 1
+  periodSeconds: 2
+  failureThreshold: 15
+
+# -- Graceful shutdown. Raise for MOCK-508.3 hangShutdown tests (deployment.md §6).
+terminationGracePeriodSeconds: 30
+
+# -- ServiceAccount. Dedicated, least privilege: mcpmock needs no Kubernetes API
+# access, so no Role/RoleBinding is created and the token is not auto-mounted.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# -- Rollout strategy. maxUnavailable:0 keeps the single replica available across
+# an upgrade; readiness gates on /readyz (deployment.md §6).
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+# -- GOMEMLIMIT: set from the memory limit so Go's GC targets the cgroup, not the
+# host (deployment.md §5). true = derive automatically; set a string to override.
+gomemlimit:
+  enabled: true
+
+# -- Scheduling.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# -- Extra pod annotations / labels.
+podAnnotations: {}
+podLabels: {}
+
+# -- Extra environment variables (endpoints/secrets only, never behaviour —
+# MOCK-704). List of core-v1 EnvVar objects.
+extraEnv: []
+
+# -- Extra volumes / mounts for advanced scenarios (e.g. a larger scenario tree).
+extraVolumes: []
+extraVolumeMounts: []

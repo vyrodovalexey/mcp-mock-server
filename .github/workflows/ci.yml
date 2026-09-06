@@ -1,0 +1,878 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - 'v*'
+
+# Concurrency control - cancel in-progress runs for the same branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default least-privilege token for every job; jobs widen explicitly where needed.
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.27.1'
+  GOLANGCI_LINT_VERSION: 'v2.13.2'
+  GITLEAKS_VERSION: 'v8.30.1'
+  DOCKER_REGISTRY: ghcr.io
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}
+  HELM_VERSION: 'v3.19.1'
+  HELM_CHART_PATH: 'helm/mcpmock'
+  HELM_RELEASE_NAME: 'mcpmock'
+  HELM_NAMESPACE: 'mcpmock-test'
+
+jobs:
+  # ===========================================================================
+  # Parallel Jobs: Lint, Vulnerability Check, Unit Tests, Functional Tests
+  # ===========================================================================
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # .golangci.yml sets run.tests: false, so golangci-lint does NOT compile or
+      # inspect *_test.go files. On its own it therefore CANNOT catch a test tree
+      # that fails to compile. `go vet ./...` type-checks and compiles test files
+      # for the whole module, so this step is the gate that closes that hole in a
+      # fast, cluster-free job. It runs BEFORE golangci-lint so a broken test tree
+      # fails here regardless of lint's opinion. Do not remove it.
+      - name: go vet (compiles test files - closes the run.tests=false gap)
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m
+
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # A green build must guarantee the module and ALL its test files compile.
+      # `go build ./...` covers non-test source; `go test -race` below covers test
+      # source. Both are gating (no || true). This job is the primary test gate for
+      # acceptance criterion (d) "all tests pass".
+      - name: Build all packages
+        run: go build ./...
+
+      - name: Run unit tests with coverage (race)
+        run: |
+          go test -race -coverprofile=coverage-unit.out -covermode=atomic ./...
+
+      # Several journal tests are GOMAXPROCS-sensitive (sharded ring; per-shard
+      # capacity binds). They passed at high parallelism locally but three defects
+      # hid at low core counts. Re-run the suite pinned to a single P so that class
+      # of bug fails CI rather than a user. -count=2 also exercises non-idempotent
+      # global state. This step is gating.
+      - name: Run tests under GOMAXPROCS=1 (sharded-ring regression guard)
+        env:
+          GOMAXPROCS: '1'
+        run: |
+          go test -race -count=2 ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-unit.out
+          flags: unit
+          name: unit-tests
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-unit
+          path: coverage-unit.out
+          retention-days: 7
+
+  functional-tests:
+    name: Functional Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # The functional suite lands with later Phase-1 tasks under test/functional.
+      # When present the suite is a real, non-optional gate (no || true). When the
+      # directory is not yet in the tree the job reports that fact and passes, so
+      # the job wiring is in place ahead of the tests without faking a green suite.
+      - name: Run functional tests with coverage (race)
+        run: |
+          if [ -d test/functional ]; then
+            go test -race -coverprofile=coverage-functional.out -covermode=atomic -tags=functional ./test/functional/...
+          else
+            echo "NOTE: test/functional/ not present yet (arrives with later Phase-1 tasks)."
+            echo "      Skipping - the job is wired and will gate once the suite lands."
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        if: hashFiles('coverage-functional.out') != ''
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-functional.out
+          flags: functional
+          name: functional-tests
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: hashFiles('coverage-functional.out') != ''
+        with:
+          name: coverage-functional
+          path: coverage-functional.out
+          retention-days: 7
+
+  # ===========================================================================
+  # Policy Gates (TASK-033)
+  #
+  # The machine-enforced policy gates: each REUSES an existing implementation
+  # (a Go test or a hack/ program) via its Makefile target, so the CI verdict is
+  # byte-identical to `make <gate>` on a developer's laptop. This job is fast and
+  # cluster-free, joins the early parallel set, and GATES the build through
+  # sonarcloud's needs/if (below). No || true, no continue-on-error.
+  #
+  # NOT here:
+  #   - determinism-check: owned by TASK-026, wired by that task when it lands.
+  #   - corpus-verify:     Phase 9 (MOCK-507); fails closed, nothing to verify.
+  #   - secrets-check:     runs as its own job below (needs the gitleaks binary).
+  # ===========================================================================
+
+  policy-gates:
+    name: Policy Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Each gate invokes the existing implementation through its Makefile target
+      # so local and CI produce the same verdict. globals-check runs the TASK-028
+      # AST auditor from the external embed module; deps-check runs the hack/
+      # two-tier ADR-013 oracle; schema-check and wire-literal-check run the
+      # TASK-006 / TASK-010 Go tests (the latter preserving the internal/obs
+      # allowlist). All are gating.
+      - name: deps-check (ADR-013 two-tier dependency policy)
+        run: make deps-check
+
+      - name: globals-check (no mutable globals / side-effecting init in public packages)
+        run: make globals-check
+
+      - name: schema-check (embedded scenario schema == spec, SHA-256)
+        run: make schema-check
+
+      - name: wire-literal-check (no wire literals escape internal/wire, ADR-019)
+        run: make wire-literal-check
+
+  # ===========================================================================
+  # Secret Scan (TASK-033)
+  #
+  # security.md §3: no committed credentials. gitleaks is installed at a PINNED
+  # version the same way govulncheck is (go install @vX.Y.Z) — no third-party
+  # marketplace action is introduced — and the scan runs through the same
+  # `make secrets-check` target used locally, so the verdict matches. Fails the
+  # build on any finding (the target passes --exit-code 1). This is a real,
+  # gating scan: the target FAILS CLOSED if the binary is somehow absent.
+  # ===========================================================================
+
+  secrets-check:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0  # gitleaks scans history when available
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # gitleaks' module path is github.com/zricethezav/gitleaks (the repo moved
+      # org to gitleaks/gitleaks but kept the original module path). Pinned like
+      # govulncheck — no third-party marketplace action is introduced.
+      - name: Install gitleaks (pinned)
+        run: go install github.com/zricethezav/gitleaks/v8@${{ env.GITLEAKS_VERSION }}
+
+      - name: secrets-check (gitleaks, fail-closed on findings)
+        run: make secrets-check
+
+  # ===========================================================================
+  # Integration Tests
+  #
+  # mcpmock has NO external dependencies: MOCK-405 exists precisely so that auth
+  # tests need no IdP. The Vault / Keycloak / Postgres service containers from the
+  # template are removed (deployment.md 7.3). Integration failures fail the build -
+  # they cover MOCK-106 / MOCK-502 / MOCK-508, which no other test level covers.
+  # ===========================================================================
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        run: |
+          if [ -d test/integration ]; then
+            go test -race -coverprofile=coverage-integration.out -covermode=atomic -tags=integration -timeout=5m ./test/integration/...
+          else
+            echo "NOTE: test/integration/ not present yet (arrives with later Phase-1 tasks)."
+            echo "      Skipping - the job is wired and will gate once the suite lands."
+          fi
+
+      - name: Upload integration coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && hashFiles('coverage-integration.out') != ''
+        with:
+          name: coverage-integration
+          path: coverage-integration.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # E2E Tests
+  #
+  # Boots the mcpmock server locally and drives it. Uses mcpmock's flags and the
+  # /readyz probe on the metrics port (:9090) - the APP_* env and /health poll
+  # from the template are removed (deployment.md 7.4). Failures fail the build.
+  # ===========================================================================
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build mcpmock binary
+        run: |
+          CGO_ENABLED=0 go build -o bin/mcpmock ./cmd/mcpmock
+
+      - name: Start mcpmock in background
+        run: |
+          ./bin/mcpmock serve \
+            --listen 127.0.0.1:8080 \
+            --metrics-listen 127.0.0.1:9090 \
+            --log-level info &
+          echo $! > /tmp/mcpmock.pid
+          # Wait for readiness on the metrics port (/readyz, :9090).
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9090/readyz > /dev/null 2>&1; then
+              echo "mcpmock is ready"
+              break
+            fi
+            echo "Waiting for mcpmock... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run E2E tests
+        env:
+          MCPMOCK_E2E_SERVER_URL: http://127.0.0.1:8080
+          MCPMOCK_E2E_METRICS_URL: http://127.0.0.1:9090
+        run: |
+          if [ -d test/e2e ]; then
+            go test -race -coverprofile=coverage-e2e.out -covermode=atomic -tags=e2e -timeout=5m ./test/e2e/...
+          else
+            echo "NOTE: test/e2e/ not present yet (arrives with later Phase-1 tasks)."
+            echo "      Skipping - the job is wired and will gate once the suite lands."
+          fi
+
+      - name: Stop mcpmock
+        if: always()
+        run: |
+          if [ -f /tmp/mcpmock.pid ]; then
+            kill "$(cat /tmp/mcpmock.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload E2E coverage artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && hashFiles('coverage-e2e.out') != ''
+        with:
+          name: coverage-e2e
+          path: coverage-e2e.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # Sequential Jobs: SonarCloud, Build, Docker
+  # ===========================================================================
+
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests, e2e-tests, policy-gates, secrets-check]
+    # Requires a SONAR_TOKEN org secret. When it is absent (e.g. forks) the job is
+    # skipped rather than failing the build - see the guard below. It still gates
+    # on the real test jobs having succeeded. The policy-gates and secrets-check
+    # jobs (TASK-033) are in this gate: a failed gate blocks the whole downstream
+    # build/release chain, so the fail-closed stubs are now truly enforced.
+    if: >-
+      !cancelled()
+      && needs.lint.result == 'success'
+      && needs.govulncheck.result == 'success'
+      && needs.unit-tests.result == 'success'
+      && needs.functional-tests.result == 'success'
+      && needs.integration-tests.result == 'success'
+      && needs.e2e-tests.result == 'success'
+      && needs.policy-gates.result == 'success'
+      && needs.secrets-check.result == 'success'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0  # Required for SonarCloud
+
+      - name: Check for SonarCloud token
+        id: sonar_check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "${SONAR_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "NOTE: SONAR_TOKEN not configured - skipping SonarCloud analysis."
+          fi
+
+      - name: Download unit coverage
+        if: steps.sonar_check.outputs.enabled == 'true'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        with:
+          name: coverage-unit
+
+      - name: Download functional coverage
+        if: steps.sonar_check.outputs.enabled == 'true'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        continue-on-error: true
+        with:
+          name: coverage-functional
+
+      - name: Download integration coverage
+        if: steps.sonar_check.outputs.enabled == 'true'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        continue-on-error: true
+        with:
+          name: coverage-integration
+
+      - name: Download E2E coverage
+        if: steps.sonar_check.outputs.enabled == 'true'
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        continue-on-error: true
+        with:
+          name: coverage-e2e
+
+      - name: Determine coverage paths
+        if: steps.sonar_check.outputs.enabled == 'true'
+        id: coverage
+        run: |
+          PATHS=""
+          for f in coverage-unit.out coverage-functional.out coverage-integration.out coverage-e2e.out; do
+            if [ -f "$f" ]; then
+              PATHS="${PATHS:+${PATHS},}$f"
+            fi
+          done
+          echo "paths=${PATHS}" >> "$GITHUB_OUTPUT"
+
+      - name: SonarCloud Scan
+        if: steps.sonar_check.outputs.enabled == 'true'
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
+            -Dsonar.organization=${{ github.repository_owner }}
+            -Dsonar.go.coverage.reportPaths=${{ steps.coverage.outputs.paths }}
+            -Dsonar.sources=.
+            -Dsonar.exclusions=**/*_test.go,**/vendor/**,**/test/**
+            -Dsonar.tests=.
+            -Dsonar.test.inclusions=**/*_test.go,**/test/**
+            -Dsonar.qualitygate.wait=${{ !startsWith(github.ref, 'refs/tags/') }}
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [sonarcloud]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Prefer the Makefile target so local and CI builds are identical.
+      - name: Build binary
+        run: make build
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcpmock-binary
+          path: bin/mcpmock
+          retention-days: 7
+
+  docker-build-pr:
+    name: Docker Build (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=pr
+            type=sha,prefix=pr-
+
+      # Dockerfile is authored by TASK-030. This job builds it (no push) once it
+      # exists; until then it reports the pending dependency and passes so the PR
+      # graph stays intact without faking an image build.
+      - name: Build Docker image (no push)
+        if: hashFiles('Dockerfile') != ''
+        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v6.12.0
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Note pending Dockerfile
+        if: hashFiles('Dockerfile') == ''
+        run: |
+          echo "NOTE: Dockerfile not present yet (owner: TASK-030). Skipping image build."
+
+  # ===========================================================================
+  # Helm Validate (PR only)
+  # ===========================================================================
+
+  helm-validate:
+    name: Helm Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build-pr]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # The chart is authored by TASK-031. This job lints and renders it (no
+      # cluster needed) once it exists. Until then it reports the pending
+      # dependency and passes.
+      - name: Helm Lint
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) != ''
+        run: helm lint ${{ env.HELM_CHART_PATH }}
+
+      - name: Helm Template
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) != ''
+        run: helm template ${{ env.HELM_RELEASE_NAME }} ${{ env.HELM_CHART_PATH }} --set image.tag=test --debug
+
+      - name: Note pending chart
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) == ''
+        run: |
+          echo "NOTE: ${{ env.HELM_CHART_PATH }} not present yet (owner: TASK-031). Skipping helm validate."
+
+  # ================================
+  # Sequential Stage: Build & Release
+  # ================================
+
+  build-release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [sonarcloud]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      # Static, CGO-disabled binaries (MOCK-101). linux/amd64 is required; arm64
+      # variants shipped too. Uses the same ldflags contract as the Makefile.
+      - name: Build release binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p bin
+          BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            out="bin/mcpmock-${os}-${arch}"
+            echo "building ${out}"
+            CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_TIME}" \
+              -o "${out}" \
+              ./cmd/mcpmock
+          done
+
+      - name: Create checksums
+        run: |
+          cd bin
+          sha256sum mcpmock-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            bin/mcpmock-linux-amd64
+            bin/mcpmock-linux-arm64
+            bin/mcpmock-darwin-arm64
+            bin/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcpmock-binary
+          path: bin/mcpmock-*
+          retention-days: 7
+
+  # ===========================================================================
+  # Tag-only Jobs: Docker Build & Push, Trivy Scan
+  # ===========================================================================
+
+  docker-build-push:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [sonarcloud]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # required for Cosign keyless (OIDC) signing
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v6.12.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
+        with:
+          image: ${{ env.DOCKER_IMAGE }}@${{ steps.build.outputs.digest }}
+          artifact-name: sbom-${{ steps.meta.outputs.version }}.spdx.json
+          output-file: ./sbom.spdx.json
+          upload-release-assets: false
+
+      # Cosign signature + SBOM attestation (deployment.md 7.6, requirements 10.2).
+      # Keyless (OIDC) signing requires id-token: write on this job (set above).
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Sign image (keyless, OIDC)
+        run: |
+          cosign sign --yes \
+            "${{ env.DOCKER_IMAGE }}@${{ steps.build.outputs.digest }}"
+
+      - name: Attach SBOM attestation
+        run: |
+          cosign attest --yes --predicate ./sbom.spdx.json --type spdxjson \
+            "${{ env.DOCKER_IMAGE }}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: ./sbom.spdx.json
+          retention-days: 90
+
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build-push]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.0
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}@${{ needs.docker-build-push.outputs.image-digest }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@fb0994ef1c058010acf1efccff928b0a83b1ed54 # v4.32.6
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Trivy vulnerability scanner (gating, table output)
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.0
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}@${{ needs.docker-build-push.outputs.image-digest }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '1'
+
+      - name: Upload Trivy results artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          retention-days: 30
+
+  # ===========================================================================
+  # Helm Deploy (Tag only)
+  #
+  # Deploy verification against the authorised target (context docker-desktop,
+  # namespace mcpmock-test) is owned by TASK-034 and is NOT performed here. This
+  # job performs a chart-render / dry-run smoke test only, in an ephemeral kind
+  # cluster, and is wired to activate once the chart (TASK-031) lands.
+  # ===========================================================================
+
+  helm-deploy:
+    name: Helm Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [docker-build-push, trivy-scan]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Note chart / deploy ownership
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) == ''
+        run: |
+          echo "NOTE: ${{ env.HELM_CHART_PATH }} not present yet (owner: TASK-031)."
+          echo "      Live deploy verification is owned by TASK-034 (context docker-desktop,"
+          echo "      namespace mcpmock-test) and is not run in this workflow."
+
+      - name: Create kind cluster
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) != ''
+        uses: helm/kind-action@92086f6be054225fa813e0a4b13787fc9088faab # v1.13.0
+        with:
+          cluster_name: helm-install-test
+          wait: 120s
+
+      - name: Helm install (dry-run smoke test in ephemeral kind)
+        if: hashFiles(format('{0}/Chart.yaml', env.HELM_CHART_PATH)) != ''
+        run: |
+          kubectl create namespace ${{ env.HELM_NAMESPACE }}
+          helm install --dry-run --debug ${{ env.HELM_RELEASE_NAME }} ${{ env.HELM_CHART_PATH }} \
+            --namespace ${{ env.HELM_NAMESPACE }} \
+            --set image.repository=${{ env.DOCKER_IMAGE }} \
+            --set image.tag=${{ needs.docker-build-push.outputs.image-tag }}

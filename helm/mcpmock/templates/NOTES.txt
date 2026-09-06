@@ -1,0 +1,63 @@
+mcpmock {{ .Chart.AppVersion }} — release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Deterministic mock MCP server. A single deployable unit with three ports:
+
+  8080  mcp      Service  {{ include "mcpmock.fullname" . }}
+  9090  metrics  Service  {{ include "mcpmock.fullname" . }}-metrics   (/metrics /healthz /readyz)
+{{- if .Values.control.enabled }}
+  9091  control  Service  {{ include "mcpmock.fullname" . }}-control   (token-protected)
+{{- else }}
+  9091  control  DISABLED (control.enabled=false — loopback-only posture)
+{{- end }}
+
+Wait for readiness (kubelet gates on /readyz, which returns 200 only after the
+MCP listener is accepting and the Snapshot is published):
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "mcpmock.fullname" . }} --timeout=120s
+
+Reach the MCP endpoint from inside the cluster:
+
+  {{ include "mcpmock.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mcp.port }}{{ .Values.mcp.path }}
+
+Scrape metrics / probe health locally:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "mcpmock.fullname" . }}-metrics {{ .Values.metrics.port }}:{{ .Values.metrics.port }}
+  curl -sf http://127.0.0.1:{{ .Values.metrics.port }}/readyz && echo ok
+
+{{- if .Values.control.enabled }}
+
+CONTROL API IS ENABLED. It mutates the mock and reads its journal — treat it as
+privileged. The bearer token is read from the Secret {{ .Values.control.tokenSecretName | quote }}
+(key {{ .Values.control.tokenSecretKey | quote }}), mounted as a file so it never
+appears in the pod's args or a process listing.
+{{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+
+################################################################################
+# WARNING: replicaCount = {{ .Values.replicaCount }}                            #
+#                                                                              #
+# The journal is PER-PROCESS and PER-REPLICA. With more than one replica a     #
+# test's evidence is split across pods and journal assertions become RACY.     #
+# >1 replica is supported ONLY for MOCK-508.2 rolling-restart testing. For     #
+# ordinary functional testing, use replicaCount: 1.                            #
+################################################################################
+{{- end }}
+
+Resource envelope (profile: {{ .Values.profile }}):
+  requests/limits are sized for the "{{ .Values.profile }}" workload (deployment.md §5).
+  The journal ring (default 8 MiB / 4096 records) fits inside the memory limit
+  ({{ include "mcpmock.memoryLimit" . }}) alongside the ~87 MiB working set of a
+  large instance fleet. GOMEMLIMIT is {{ if .Values.gomemlimit.enabled }}set from the memory limit so Go's GC targets the cgroup{{ else }}NOT set (gomemlimit.enabled=false){{ end }}.
+
+{{- if not .Values.networkPolicy.enabled }}
+
+NOTE: networkPolicy.enabled=false — the pod has no egress/ingress restrictions.
+The recommended posture is default-deny egress (networkPolicy.enabled=true).
+{{- end }}
+
+Scenario source: {{ if .Values.scenario.configMapName }}existing ConfigMap {{ .Values.scenario.configMapName | quote }}{{ else }}inline (rendered ConfigMap {{ include "mcpmock.scenarioConfigMapName" . }}){{ end }}, key {{ .Values.scenario.key | quote }}.
+{{- if .Values.scenario.validateOnStart }}
+An init container runs `mcpmock validate` against it, so a bad scenario fails the
+rollout with a readable message instead of crash-looping.
+{{- end }}

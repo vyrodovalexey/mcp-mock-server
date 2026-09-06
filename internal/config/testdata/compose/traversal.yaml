@@ -1,0 +1,8 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: traversal
+extends:
+  - ../outside-secret.yaml
+spec:
+  era: modern

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "mcpmock Helm values",
+  "description": "The supported values contract for the mcpmock chart (deployment.md §4).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["image", "replicaCount", "scenario", "metrics", "networkPolicy", "resources", "profile"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "pullSecrets": { "type": "array" }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "scenario": {
+      "type": "object",
+      "required": ["key", "validateOnStart"],
+      "properties": {
+        "inline": {
+          "type": "object",
+          "description": "Structural pre-validation of the inline scenario so a malformed default fails at helm lint/install time rather than as a validateOnStart init-container timeout (DEF-012). This is a lightweight guard, NOT a re-implementation of the authoritative binary schema (specification/contracts/scenario.schema.json, JSON Schema 2020-12); the init container remains the source of truth.",
+          "properties": {
+            "apiVersion": { "const": "mcpmock.dev/v1alpha1" },
+            "kind": { "enum": ["Scenario", "Fleet"] },
+            "spec": {
+              "type": "object",
+              "properties": {
+                "transport": {
+                  "type": "object",
+                  "description": "MUST be an object per $defs/transport. A bare string (e.g. `transport: http`) is the DEF-012 defect and is rejected here.",
+                  "properties": {
+                    "kinds": {
+                      "type": "array",
+                      "items": { "enum": ["http", "stdio"] }
+                    },
+                    "http": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string", "pattern": "^/" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "configMapName": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 },
+        "validateOnStart": { "type": "boolean" }
+      }
+    },
+    "seed": { "type": ["string", "integer"] },
+    "logLevel": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+    "mcp": {
+      "type": "object",
+      "required": ["port"],
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "path": { "type": "string" },
+        "service": { "type": "object" },
+        "tls": { "type": "object" }
+      }
+    },
+    "control": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "type": "object" },
+        "tokenSecretName": { "type": "string" },
+        "tokenSecretKey": { "type": "string" },
+        "networkPolicy": { "type": "object" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "serviceMonitor": { "type": "object" }
+      }
+    },
+    "tracing": { "type": "object" },
+    "hostile": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "denyAllEgress": { "type": "boolean" },
+        "allowDNS": { "type": "boolean" },
+        "tracingEgress": { "type": "object" },
+        "ingressFrom": { "type": "array" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    },
+    "profile": { "type": "string", "enum": ["default", "large-fleet", "many-streams", "throughput"] },
+    "profiles": { "type": "object" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "livenessProbe": { "type": "object" },
+    "readinessProbe": { "type": "object" },
+    "startupProbe": { "type": "object" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "serviceAccount": { "type": "object" },
+    "updateStrategy": { "type": "object" },
+    "gomemlimit": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "topologySpreadConstraints": { "type": "array" },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "extraEnv": { "type": "array" },
+    "extraVolumes": { "type": "array" },
+    "extraVolumeMounts": { "type": "array" }
+  }
+}

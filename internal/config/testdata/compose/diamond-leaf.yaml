@@ -1,0 +1,18 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: diamond-leaf
+spec:
+  era: modern
+  discover:
+    instructions: from leaf
+  catalogue:
+    tools:
+      count: 1
+    items:
+      - name: shared
+        kind: tool
+        description: leaf shared
+  journal:
+    bodies: full
+    maxRecords: 1000

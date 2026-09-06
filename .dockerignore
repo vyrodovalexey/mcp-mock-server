@@ -1,0 +1,53 @@
+# .dockerignore — TASK-030
+#
+# Keeps the build context small, reproducible and free of anything that could
+# either bloat the image, leak a secret, or defeat build caching. The build
+# stage needs only go.mod/go.sum and the Go source tree; everything below is
+# either irrelevant to `go build ./cmd/mcpmock` or actively unwanted in a
+# build context (VCS metadata, multi-GB perf output, editor/agent state).
+
+# --- version control & CI metadata -----------------------------------------
+.git
+.gitignore
+.github
+
+# --- agent / editor / IDE state (never in an image, may hold local notes) ---
+.opencode
+.idea
+.vscode
+.Claude
+*.swp
+*.swo
+*~
+
+# --- build outputs (rebuilt inside the image; must not leak host binaries) --
+bin/
+# Pre-built host binaries left at the repo root by local `go build` runs.
+# These are darwin/arm64 and must never end up in a linux image layer.
+/mcpmock
+/perfserver
+coverage/
+*.out
+*.html
+*.test
+
+# --- performance corpus: test/perf held ~GBs of k6 output (TASK-030 brief) --
+test/perf/
+
+# --- test assets & fixtures not needed to compile the binary ----------------
+test/docker-compose/
+testdata/
+
+# --- packaging & docs that do not belong in the build context ---------------
+helm/
+deploy/
+Dockerfile
+.dockerignore
+*.tgz
+*.md
+LICENSE
+
+# --- local tooling / scratch ------------------------------------------------
+hack/
+go.work
+go.work.sum

@@ -1,0 +1,21 @@
+# Deterministic catalogue name+description golden vectors.
+# seed=0x0123456789ABCDEF instance="golden" count=5000 default template.
+# CHANGING THIS FILE IS A BREAKING CHANGE: it pins ADR-004 generated
+# names and descriptions and requires a scenario apiVersion bump (ADR-002).
+# format: <kind> <index> <name> | <description>
+tool 0 tool_00000 | generated instance reproducible primitive reproducible virtual primitive reproducible
+tool 1 tool_00001 | overlay reproducible primitive primitive virtual generated catalog virtual
+tool 2499 tool_02499 | generated snapshot reproducible instance overlay overlay mock primitive
+tool 4999 tool_04999 | catalog catalog mock mock generated reproducible snapshot generated
+prompt 0 prompt_00000 | reproducible catalog virtual catalog overlay catalog deterministic instance
+prompt 1 prompt_00001 | reproducible deterministic deterministic deterministic snapshot virtual deterministic reproducible
+prompt 2499 prompt_02499 | virtual primitive reproducible instance overlay deterministic primitive deterministic
+prompt 4999 prompt_04999 | mock primitive generated generated virtual snapshot mock instance
+resource 0 resource_00000 | deterministic reproducible virtual deterministic overlay snapshot overlay reproducible
+resource 1 resource_00001 | reproducible deterministic catalog overlay generated generated mock generated
+resource 2499 resource_02499 | reproducible deterministic overlay generated instance generated mock catalog
+resource 4999 resource_04999 | virtual overlay generated instance deterministic overlay instance generated
+resourceTemplate 0 resourceTemplate_00000 | instance instance primitive reproducible virtual instance generated reproducible
+resourceTemplate 1 resourceTemplate_00001 | virtual mock mock deterministic deterministic mock deterministic overlay
+resourceTemplate 2499 resourceTemplate_02499 | overlay primitive primitive overlay mock primitive instance mock
+resourceTemplate 4999 resourceTemplate_04999 | mock deterministic catalog catalog instance catalog overlay snapshot

@@ -1,0 +1,52 @@
+{
+  "_note": "GOLDEN determinism vectors (ADR-002). Changing any value here is a BREAKING change: it means a derivation constant (domain string, root label, separator, clock bound) changed, which invalidates every golden fixture and every recorded seed downstream and REQUIRES a scenario apiVersion bump. Regenerate ONLY with a deliberate, reviewed derivation change.",
+  "seed": 81985529216486895,
+  "instance": "alpha",
+  "method": "tools/call",
+  "rawId": "\"req-1\"",
+  "bodyForHash": "{\"b\":2,\"a\":1}",
+  "keys": [
+    {
+      "desc": "root = Root(seed)",
+      "key": "00e270e9daa19c9fc904e368f5c50b35116911512e2c71874deb6707d64e1e0b"
+    },
+    {
+      "desc": "instanceKey = root.Derive(instance, \"alpha\")",
+      "key": "8ff147e689d6e37d61750b0d2c11af9d1f20901dc8b15ab8a6ebf51ae425361e"
+    },
+    {
+      "desc": "requestKey = instanceKey.Derive(request, method, rawId, sha256(body))",
+      "key": "c8a1cc027622555d9623dbb8f19a8343d17d3b531e538be2471a428b975527d0"
+    },
+    {
+      "desc": "catalogueKey = instanceKey.Derive(catalogue, \"item-0\")",
+      "key": "6d8ba5aedaaf2370167c12ce043e7ed524541f9e89650017376ae2f36da5d149"
+    },
+    {
+      "desc": "orderingKey = requestKey.Derive(ordering, be32(1))",
+      "key": "b0d197401af5e3b2d554aec484e4d0733f8d9ae12b9b2dc6a380a12d58a8a163"
+    },
+    {
+      "desc": "clockKey = requestKey.Derive(clock)",
+      "key": "9ab03937a201a045cd7f20bb368a7cba0d7a38ebf8e73309208d305cd3629918"
+    }
+  ],
+  "rng": [
+    {
+      "desc": "first 256 bytes of requestKey.RNG() via Uint32 low bytes",
+      "head256": "565f708989860e487b7c1705e9671d66aba502f624997b4496537e582d70bf5f82faa71d6aea244bd4e69044b1148428acc90969bef714e9ebf68c1328cf35173a796057843ad34c2c7d15e0e3511258014785c877a2fb5b26407fd2aa48f038b446ed06b681ef985d69bd099dd104229b7007dabc9d7b0e4a11b6cb8d81aced651e86632d448ab454d1c40410ce0293694b05e955cca85b3c8b904c4c907b59c5304edbf32ad9088cf646e765fee7aa751ff7af5187170fd066ba3c5e7a13e9992bef4a47704e728683383ab87f61e642c174bcd31845c934ae64bf2fc13c70086dd3c1486a29437728b9a69c1b07eacdf8943d879fcdd9842ec13fb38c6274"
+    }
+  ],
+  "clock": [
+    {
+      "desc": "VirtualClock(requestKey, 2020-01-01T00:00:00Z)",
+      "epochNs": 1577836800000000000,
+      "rfc3339": "2020-01-01T02:13:08.845977669Z"
+    },
+    {
+      "desc": "VirtualClock(requestKey, 2000-06-15T12:00:00Z)",
+      "epochNs": 961070400000000000,
+      "rfc3339": "2000-06-15T14:13:08.845977669Z"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: single-overlay
+extends:
+  - base.yaml
+spec:
+  # scalar replace: change the tool count set by the base
+  catalogue:
+    tools:
+      count: 50
+    # keyed-list merge: update base 'alpha' in place, add 'gamma'
+    items:
+      - name: alpha
+        description: overlay alpha
+      - name: gamma
+        kind: tool
+        description: overlay gamma
+  # null delete: remove the discover.ttlMs the base set
+  discover:
+    ttlMs: null
+    instructions: from overlay

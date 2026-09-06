@@ -1,0 +1,29 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: happy-path
+  description: >
+    The Phase 1 delivered scenario (MOCK-705, Phase 1 subset). A single modern
+    instance on HTTP with strict _meta validation and the three built-in tools
+    (echo, sleep, fail) available by default. It is deliberately minimal: it
+    exercises the happy path end to end and is the scenario the functional suite
+    drives. The other nine of MOCK-705 are Phase 11.
+  coversRequirements:
+    - MOCK-102
+    - MOCK-201
+    - MOCK-202
+    - MOCK-203
+    - MOCK-209
+    - MOCK-601
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  switches:
+    validateMeta: strict
+  journal:
+    enabled: true
+    bodies: full

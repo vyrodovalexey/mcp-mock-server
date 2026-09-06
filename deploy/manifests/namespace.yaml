@@ -1,0 +1,12 @@
+# Plain manifests for mcpmock (MOCK-101, deployment.md §8). These are the Helm
+# output for the `default` profile, hand-checked, so a reader who wants to know
+# what the chart produces need not run Helm. A CI check asserts they stay in sync
+# with `helm template --set profile=default`.
+#
+# Authorized target: kubernetes context docker-desktop, namespace mcpmock-test.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcpmock-test
+  labels:
+    app.kubernetes.io/part-of: mcpmock

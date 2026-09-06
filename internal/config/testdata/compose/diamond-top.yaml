@@ -1,0 +1,16 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: diamond-top
+extends:
+  - diamond-mid-a.yaml
+  - diamond-mid-b.yaml
+spec:
+  # top adds an authored item but leaves count to the branches:
+  # mid-b (rightmost, highest precedence) wins with count=3,
+  # discover.instructions = from mid-a (only mid-a set it).
+  catalogue:
+    items:
+      - name: top-item
+        kind: tool
+        description: from top

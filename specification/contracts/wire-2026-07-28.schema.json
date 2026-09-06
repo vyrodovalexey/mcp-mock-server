@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcpmock.dev/schema/wire/2026-07-28/v0/wire.schema.json",
+  "title": "PROVISIONAL wire schema — MCP revision 2026-07-28 — PHASE 1 SUBSET ONLY — v0/v1alpha1",
+
+  "x-status": "PROVISIONAL — NOT RATIFIED — DO NOT TREAT AS A CONFORMANCE ORACLE",
+  "x-schema-version": "v0",
+  "x-stability": "v1alpha1 — may change incompatibly without notice",
+  "x-authored-not-ratified": true,
+  "x-gap": "GAP-003",
+  "x-normative-source": "specification/requirements.md — the SOLE normative source",
+  "x-prose-annex": "specification/contracts/wire-2026-07-28.md",
+  "x-created-by": "AMEND-4 (2026-09-04), closing task-breakdown gap G-4",
+  "x-conformance-claim": "NONE. This file makes no claim about what the Model Context Protocol does or does not define. mcpmock emulates requirements.md plus an authored annex.",
+
+  "x-WARNING": [
+    "READ THIS BEFORE USING THIS FILE AS AN ORACLE.",
+    "",
+    "This schema was AUTHORED by the mcpmock specification process. It was NOT derived from a",
+    "published MCP specification document, because no such document for revision 2026-07-28 was",
+    "available to the authors. Its shapes come from requirements.md (labelled [R]), from logical",
+    "derivation (labelled [D]), and — for 21 of the constructs below — from PROPOSALS invented to",
+    "fill gaps an implementer could not proceed past (labelled [P-nn] in x-label fields).",
+    "",
+    "Validating against this schema proves ONE thing: that mcpmock is self-consistent with its own",
+    "annex. It proves NOTHING about interoperability with any real MCP client or server.",
+    "",
+    "Every [P-nn] construct is subject to change when GAP-003 is ratified. On ratification, this",
+    "file and the prose annex change together, golden fixtures are regenerated, and — per ADR-019 —",
+    "handler code does not change, because wire shapes are data.",
+    "",
+    "SCOPE: this file covers the PHASE 1 SUBSET ONLY: the _meta envelope, server/discover,",
+    "tools/list and tools/call. Mirrored headers, -32020/21/22, pagination, SSE framing, MRTR,",
+    "subscriptions and every legacy era are OUT OF SCOPE and will be added in Phase 2+."
+  ],
+
+  "x-phase1-scope": {
+    "methods": ["server/discover", "tools/list", "tools/call"],
+    "in": ["_meta envelope", "JSON-RPC 2.0 envelope", "resultType (3 values)", "_meta.serverInfo", "ttlMs/cacheScope", "-32602 data.missing", "-32601", "text content blocks"],
+    "out": ["mirrored headers", "-32020", "-32021", "-32022", "cursor/nextCursor pagination", "SSE framing", "MRTR/inputRequired", "subscriptions", "legacy eras", "non-text content blocks"]
+  },
+
+  "x-usage": {
+    "selfCheck": "switches.selfCheck=true validates every outgoing Phase 1 result against #/$defs/phase1Result before it is written. MOCK-201.4.",
+    "goldenFixtures": "TASK-027 golden fixtures assert against the specific $def for the method under test.",
+    "testClient": "test/mcpclient (ADR-017) validates responses it receives against this file, independently of server code."
+  },
+
+  "oneOf": [
+    { "$ref": "#/$defs/phase1Request" },
+    { "$ref": "#/$defs/phase1Response" }
+  ],
+
+  "$defs": {
+
+    "jsonRpcId": {
+      "type": ["string", "number"],
+      "description": "JSON-RPC 2.0 id. Null ids are not emitted by mcpmock. Raw lexical form is preserved on echo (TASK-009).",
+      "x-label": "[D JSON-RPC 2.0]"
+    },
+
+    "metaEnvelope": {
+      "type": "object",
+      "title": "_meta envelope",
+      "description": "Carried at params._meta. Annex 2.5 [P-06] — the LOCATION is proposed and is the single most consequential choice in this file: it changes every request the hub builds.",
+      "x-label": "[R MOCK-203] presence; [P-06] location",
+      "properties": {
+        "protocolVersion": {
+          "type": "string",
+          "description": "REQUIRED under validateMeta=strict. Absence => -32602/400.",
+          "x-label": "[R MOCK-203.1]"
+        },
+        "clientCapabilities": {
+          "type": "object",
+          "description": "REQUIRED under validateMeta=strict. Map of capability name to capability object.",
+          "x-label": "[R MOCK-203.2] presence; [P-08] shape",
+          "additionalProperties": { "type": "object" }
+        },
+        "clientInfo": {
+          "type": "object",
+          "x-label": "[P-07]",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "title": { "type": "string" }
+          }
+        },
+        "progressToken": {
+          "type": ["string", "number"],
+          "description": "Phase 2 (MOCK-210). Accepted and journalled in Phase 1, never acted on.",
+          "x-label": "[R MOCK-210] + [P-10] name"
+        },
+        "io.modelcontextprotocol/logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"],
+          "description": "Phase 2 (MOCK-211). RFC 5424 ladder.",
+          "x-label": "[P-09]"
+        }
+      },
+      "additionalProperties": true,
+      "x-additionalProperties-rationale": "Annex 2.11 [D]: unknown _meta keys are ignored and PRESERVED in the journal (MOCK-601, MOCK-203.6). additionalProperties MUST stay true — tightening it would make the schema reject conformant-but-extended requests."
+    },
+
+    "serverInfo": {
+      "type": "object",
+      "description": "Present in _meta on EVERY result unless switches.omitServerInfoMeta.",
+      "x-label": "[R MOCK-209] presence; [P-22] shape",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "title": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "resultMeta": {
+      "type": "object",
+      "properties": {
+        "serverInfo": { "$ref": "#/$defs/serverInfo" },
+        "clamped": { "type": "boolean", "description": "builtin-tools.md 3.3, onExceedMaxSleep=clamp." },
+        "requestedMs": { "type": "integer", "description": "builtin-tools.md 3.3, accompanies clamped." }
+      },
+      "additionalProperties": true
+    },
+
+    "resultType": {
+      "type": "string",
+      "enum": ["discovery", "toolList", "toolResult"],
+      "description": "PHASE 1 SUBSET of annex 4.2 [P-21]. The full enum has 11 values; the other 8 belong to methods that do not exist in Phase 1 and are added in Phase 2+.",
+      "x-label": "[P-21]"
+    },
+
+    "cacheHints": {
+      "type": "object",
+      "description": "Result-level cache hints on server/discover and list methods.",
+      "x-label": "[R MOCK-201, MOCK-232] presence; [P-23] cacheScope value set",
+      "properties": {
+        "ttlMs": { "type": ["integer", "null"] },
+        "cacheScope": {
+          "type": ["string", "null"],
+          "description": "Proposed set is public|private, but MOCK-232.4 requires ARBITRARY strings be emittable, so this is deliberately not an enum."
+        }
+      }
+    },
+
+    "textContentBlock": {
+      "type": "object",
+      "description": "The ONLY content block Phase 1 emits (builtin-tools.md 1.2 [P-40]).",
+      "x-label": "[P-40]",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "discoverResult": {
+      "type": "object",
+      "title": "server/discover result",
+      "x-label": "[R MOCK-201] field set; [P-26..P-30] shapes",
+      "description": "MOCK-201.3: an OMITTED field is ABSENT, never present-and-null. That is why nothing here is required except resultType — each field is independently omissible by configuration, and the schema must accept every omission combination.",
+      "required": ["resultType"],
+      "properties": {
+        "resultType": { "const": "discovery" },
+        "supportedVersions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Revision strings, most-preferred first.",
+          "x-label": "[P-27]"
+        },
+        "capabilities": {
+          "type": "object",
+          "x-label": "[P-28]",
+          "properties": {
+            "extensions": {
+              "type": "object",
+              "description": "Extension URI/name to arbitrary JSON. MOCK-201.2 variation is Phase 2.",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "instructions": { "type": "string", "x-label": "[P-29]" },
+        "serverInfo": { "$ref": "#/$defs/serverInfo" },
+        "ttlMs": { "type": ["integer", "null"] },
+        "cacheScope": { "type": ["string", "null"] },
+        "_meta": { "$ref": "#/$defs/resultMeta" }
+      },
+      "additionalProperties": false
+    },
+
+    "toolDescriptor": {
+      "type": "object",
+      "description": "A tools/list entry. MOCK-222.3 and MOCK-224.3: inputSchema, outputSchema, annotations and icons are emitted VERBATIM and are DELIBERATELY NOT VALIDATED — the whole point is that mcpmock can serve a hostile or malformed schema. They are therefore `true` (accept anything) here, and that is intentional, not an oversight.",
+      "x-label": "[R MOCK-221, MOCK-222]",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "inputSchema": true,
+        "outputSchema": true,
+        "annotations": true,
+        "icons": true
+      },
+      "additionalProperties": false
+    },
+
+    "toolListResult": {
+      "type": "object",
+      "title": "tools/list result",
+      "x-label": "[R MOCK-202, MOCK-221]",
+      "description": "Phase 1 is UNPAGINATED: nextCursor is not emitted. Pagination is MOCK-231, Phase 2, and will add nextCursor here.",
+      "required": ["resultType", "tools"],
+      "properties": {
+        "resultType": { "const": "toolList" },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/toolDescriptor" } },
+        "ttlMs": { "type": ["integer", "null"] },
+        "cacheScope": { "type": ["string", "null"] },
+        "_meta": { "$ref": "#/$defs/resultMeta" }
+      },
+      "additionalProperties": false
+    },
+
+    "toolCallResult": {
+      "type": "object",
+      "title": "tools/call result",
+      "x-label": "[P-39]",
+      "description": "builtin-tools.md 1.2. isError is emitted ONLY when true (builtin-tools.md 4.2 [P-50]) — hence `const: true`, which makes an accidental \"isError\": false a schema violation rather than a silent inconsistency.",
+      "required": ["resultType", "content"],
+      "properties": {
+        "resultType": { "const": "toolResult" },
+        "content": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/textContentBlock" },
+          "description": "Never empty (builtin-tools.md 1.2)."
+        },
+        "structuredContent": { "type": "object" },
+        "isError": { "const": true },
+        "_meta": { "$ref": "#/$defs/resultMeta" }
+      },
+      "additionalProperties": false
+    },
+
+    "phase1Result": {
+      "description": "SELF-CHECK ENTRY POINT. switches.selfCheck validates every outgoing Phase 1 result against this. MOCK-201.4.",
+      "oneOf": [
+        { "$ref": "#/$defs/discoverResult" },
+        { "$ref": "#/$defs/toolListResult" },
+        { "$ref": "#/$defs/toolCallResult" }
+      ]
+    },
+
+    "errorObject": {
+      "type": "object",
+      "title": "JSON-RPC error object",
+      "description": "Phase 1 emits -32700, -32600, -32601, -32602, -32603. The MCP-specific -32020/-32021/-32022 are Phase 2. The code is deliberately an unconstrained integer, not an enum: MOCK-505 (Phase 9) requires arbitrary and retired codes to be emittable, and builtin-tools.md 4.3 makes `fail` the Phase 1 seam for that.",
+      "x-label": "[D JSON-RPC 2.0] + [R MOCK-203]",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": "string" },
+        "data": true
+      },
+      "additionalProperties": false
+    },
+
+    "metaMissingErrorData": {
+      "type": "object",
+      "title": "-32602 error.data for a _meta violation",
+      "x-label": "[P-11] / [R MOCK-203.4]",
+      "required": ["missing"],
+      "properties": {
+        "missing": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["protocolVersion", "clientCapabilities"] },
+          "description": "Names the absent _meta fields. MOCK-203.4."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "phase1Request": {
+      "type": "object",
+      "title": "Phase 1 JSON-RPC request",
+      "required": ["jsonrpc", "method"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "method": { "enum": ["server/discover", "tools/list", "tools/call"] },
+        "params": {
+          "type": "object",
+          "properties": {
+            "_meta": { "$ref": "#/$defs/metaEnvelope" },
+            "name": { "type": "string", "description": "tools/call: the tool name." },
+            "arguments": { "type": "object", "description": "tools/call: builtin-tools.md 1.3." }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "method": { "const": "tools/call" } }, "required": ["method"] },
+          "then": { "required": ["params"], "properties": { "params": { "required": ["name"] } } }
+        }
+      ]
+    },
+
+    "phase1Response": {
+      "type": "object",
+      "title": "Phase 1 JSON-RPC response",
+      "description": "Exactly one of result or error, per JSON-RPC 2.0 section 5.",
+      "required": ["jsonrpc", "id"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/jsonRpcId" },
+        "result": { "$ref": "#/$defs/phase1Result" },
+        "error": { "$ref": "#/$defs/errorObject" }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["result"] },
+        { "required": ["error"] }
+      ]
+    }
+  }
+}

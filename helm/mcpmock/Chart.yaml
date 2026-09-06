@@ -1,0 +1,35 @@
+apiVersion: v2
+name: mcpmock
+description: |
+  Deterministic mock MCP server (mcpmock) — a distroless, single-process test
+  double for MCP hubs. Ships a Deployment, three Services (mcp / control /
+  metrics), a scenario ConfigMap, a default-deny NetworkPolicy and an optional
+  ServiceMonitor. See values.yaml for the supported values contract
+  (specification/deployment.md §4 is authoritative).
+type: application
+
+# version   — the CHART version. Bump for any change to templates/values (SemVer).
+# appVersion — the APPLICATION version (the mcpmock binary). Bump when the image
+#              changes. They are different fields; conflating them breaks
+#              `helm upgrade` diffing (deployment.md §4).
+version: 0.1.0
+appVersion: "0.1.0"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/vyrodovalexey/mcp-mock-server
+sources:
+  - https://github.com/vyrodovalexey/mcp-mock-server
+keywords:
+  - mcp
+  - mock
+  - testing
+  - deterministic
+maintainers:
+  - name: mcpmock maintainers
+    url: https://github.com/vyrodovalexey/mcp-mock-server
+
+annotations:
+  # Requirement traceability for reviewers (MOCK-101: chart / plain manifests).
+  mcpmock.dev/requirement: "MOCK-101"
+  mcpmock.dev/task: "TASK-031"

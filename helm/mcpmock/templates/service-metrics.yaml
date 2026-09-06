@@ -1,0 +1,23 @@
+{{- if .Values.metrics.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcpmock.fullname" . }}-metrics
+  labels:
+    {{- include "mcpmock.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+  annotations:
+    # Prometheus text-format scrape hints (the ServiceMonitor is the operator path).
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.metrics.port | quote }}
+    prometheus.io/path: /metrics
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "mcpmock.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

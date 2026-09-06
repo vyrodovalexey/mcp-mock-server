@@ -1,0 +1,11 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: diamond-mid-b
+extends:
+  - diamond-leaf.yaml
+spec:
+  # mid-b sets count=3; right branch, higher precedence than mid-a
+  catalogue:
+    tools:
+      count: 3

@@ -1,0 +1,7 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+# Deliberately incomplete: no metadata and no spec. On its own this fails schema
+# validation (a Scenario requires spec, and metadata.name is required). It is a
+# legal INTERMEDIATE because the composing document supplies the missing pieces
+# (MOCK-703.8: validation runs post-composition, not on intermediates).
+extends: []

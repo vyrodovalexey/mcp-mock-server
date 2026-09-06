@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcpmock-scenario
+  namespace: mcpmock-test
+  labels:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+    app.kubernetes.io/part-of: mcpmock
+data:
+  # Mounted read-only at /etc/mcpmock/scenario.yaml; schema-validated on load and
+  # by the validate-scenario init container.
+  scenario.yaml: |
+    apiVersion: mcpmock.dev/v1alpha1
+    kind: Scenario
+    metadata:
+      name: default
+    spec:
+      # transport is an OBJECT per specification/contracts/scenario.schema.json
+      # ($defs/transport). A bare string fails validateOnStart (DEF-012).
+      transport:
+        kinds:
+          - http
+        http:
+          path: /mcp

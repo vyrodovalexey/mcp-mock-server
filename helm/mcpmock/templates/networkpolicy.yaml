@@ -1,0 +1,85 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mcpmock.fullname" . }}
+  labels:
+    {{- include "mcpmock.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mcpmock.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # MCP port: from the hub under test. If ingressFrom is empty, allow
+    # same-namespace peers; otherwise restrict to the declared selectors.
+    - ports:
+        - port: mcp
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    # Metrics port: from Prometheus. Same-namespace by default; widen via
+    # ingressFrom if your Prometheus lives elsewhere.
+    - ports:
+        - port: metrics
+          protocol: TCP
+    {{- if .Values.control.enabled }}
+    # Control port: only from same namespace, plus any control.networkPolicy.allowedNamespaces.
+    - ports:
+        - port: control
+          protocol: TCP
+      from:
+        - podSelector: {}
+        {{- range .Values.control.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+    {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.denyAllEgress }}
+    # Default-deny egress: mcpmock never fetches remote schemas ("emit but never
+    # fetch", GAP-016), so it needs no arbitrary egress. Only the explicit
+    # allowances below are opened.
+    {{- if .Values.networkPolicy.allowDNS }}
+    # DNS resolution to kube-dns (UDP + TCP 53). Narrow and named.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.tracing.enabled }}
+    # OTLP/HTTP export to the tracing collector, only when tracing is enabled.
+    - to:
+        {{- if .Values.networkPolicy.tracingEgress.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.tracingEgress.namespaceSelector | nindent 12 }}
+          {{- with .Values.networkPolicy.tracingEgress.podSelector }}
+          podSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- else }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.tracingEgress.podSelector | nindent 12 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.tracingEgress.port }}
+          protocol: TCP
+    {{- end }}
+    {{- else }}
+    # denyAllEgress=false: allow all egress (NOT recommended; the default posture
+    # is default-deny). This branch exists only so an operator can deliberately
+    # opt out with a documented, reviewable value change.
+    - {}
+    {{- end }}
+{{- end }}

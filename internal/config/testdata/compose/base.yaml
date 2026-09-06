@@ -1,0 +1,38 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: base
+  description: shared base for overlay tests
+  labels:
+    tier: base
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  discover:
+    instructions: from base
+    ttlMs: 5000
+  catalogue:
+    tools:
+      count: 10
+    items:
+      - name: alpha
+        kind: tool
+        description: base alpha
+      - name: beta
+        kind: tool
+        description: base beta
+  faults:
+    - id: base-fault
+      trigger: { armed: true }
+      action:
+        kind: latency
+        latency:
+          mode: fixed
+          fixedMs: 100
+  journal:
+    enabled: true
+    bodies: full

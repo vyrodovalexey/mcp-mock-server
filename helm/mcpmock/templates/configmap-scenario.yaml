@@ -1,0 +1,15 @@
+{{- if not .Values.scenario.configMapName -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpmock.scenarioConfigMapName" . }}
+  labels:
+    {{- include "mcpmock.labels" . | nindent 4 }}
+data:
+  # The scenario document, mounted read-only at /etc/mcpmock/{{ .Values.scenario.key }}.
+  # Schema-validated on load; the init container runs `mcpmock validate` against
+  # it (when scenario.validateOnStart) so a bad document fails the rollout with a
+  # readable message rather than crash-looping.
+  {{ .Values.scenario.key }}: |
+    {{- toYaml .Values.scenario.inline | nindent 4 }}
+{{- end }}

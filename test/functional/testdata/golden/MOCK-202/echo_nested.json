@@ -1,0 +1,32 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "_meta": {
+      "serverInfo": {
+        "name": "mcpmock",
+        "version": "0.1.0"
+      }
+    },
+    "content": [
+      {
+        "text": "{\"a\":\"x\",\"b\":2,\"deep\":{\"z\":[1,true]},\"n\":null}",
+        "type": "text"
+      }
+    ],
+    "resultType": "toolResult",
+    "structuredContent": {
+      "echoed": {
+        "a": "x",
+        "b": 2,
+        "deep": {
+          "z": [
+            1,
+            true
+          ]
+        },
+        "n": null
+      }
+    }
+  }
+}

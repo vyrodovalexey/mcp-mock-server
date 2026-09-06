@@ -1,0 +1,17 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: meta-lenient
+  description: A scenario selecting lenient _meta validation (MOCK-203, AMEND-6).
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  switches:
+    validateMeta: lenient
+  journal:
+    enabled: true
+    bodies: full

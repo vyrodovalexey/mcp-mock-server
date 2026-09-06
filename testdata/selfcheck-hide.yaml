@@ -1,0 +1,32 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: selfcheck-hide
+  description: >-
+    Exercises the two Phase-1 switches DEF-010 and DEF-011 from a scenario file:
+    switches.selfCheck (MOCK-201.4) turns on the outgoing-result self-check, and
+    switches.methods.<name>.hideFromCapabilities (MOCK-202.3) hides a method's
+    capabilities entry independently of enable/disable.
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  discover:
+    supportedVersions: ["2026-07-28"]
+    capabilities:
+      server/discover: { v: 1 }
+      tools/list: { listChanged: true }
+      tools/call: { v: 2 }
+      extensions: { x: 1 }
+  switches:
+    selfCheck: true
+    methods:
+      tools/list:
+        enabled: true
+        hideFromCapabilities: true
+  journal:
+    enabled: true
+    bodies: full

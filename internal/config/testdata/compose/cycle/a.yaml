@@ -1,0 +1,8 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: cycle-a
+extends:
+  - b.yaml
+spec:
+  era: modern

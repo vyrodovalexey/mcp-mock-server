@@ -1,0 +1,75 @@
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "result": {
+    "_meta": {
+      "serverInfo": {
+        "name": "mcpmock",
+        "version": "0.1.0"
+      }
+    },
+    "resultType": "toolList",
+    "tools": [
+      {
+        "description": "Echoes its arguments back. Any JSON object is accepted.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": true,
+          "description": "Echoes its arguments back. Any JSON object is accepted.",
+          "properties": {
+            "message": {
+              "description": "Conventional field for the common case. Not required.",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "echo"
+      },
+      {
+        "description": "Delays for a bounded number of milliseconds, observing cancellation.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "description": "Delays for a bounded number of milliseconds, observing cancellation.",
+          "properties": {
+            "durationMs": {
+              "description": "Delay in MILLISECONDS. Bounded by behavior.maxSleepMs (default 30000). Ignored when behavior.allowClientDuration is false.",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "name": "sleep"
+      },
+      {
+        "description": "Always fails. Shape is scenario-controlled unless overridden.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "description": "Always fails. Shape is scenario-controlled unless behavior.fail.allowClientOverride is true.",
+          "properties": {
+            "code": {
+              "description": "protocolError only; honored only when allowClientOverride is true.",
+              "type": "integer"
+            },
+            "message": {
+              "description": "Honored only when allowClientOverride is true.",
+              "type": "string"
+            },
+            "mode": {
+              "description": "Honored only when behavior.fail.allowClientOverride is true.",
+              "enum": [
+                "toolError",
+                "protocolError"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "name": "fail"
+      }
+    ]
+  }
+}

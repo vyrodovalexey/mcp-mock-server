@@ -1,0 +1,11 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: completed
+extends:
+  - incomplete-base.yaml
+spec:
+  era: modern
+  catalogue:
+    tools:
+      count: 4

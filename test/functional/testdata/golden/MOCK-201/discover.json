@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "discovery",
+    "_meta": {
+      "serverInfo": {
+        "name": "mcpmock",
+        "version": "0.1.0"
+      }
+    }
+  }
+}

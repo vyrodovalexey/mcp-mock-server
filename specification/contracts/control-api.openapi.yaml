@@ -1,0 +1,716 @@
+# Control API contract — MOCK-104, MOCK-702, MOCK-602, MOCK-605
+# status: draft / version 0.1.0 / updated 2026-09-04
+# Every operation here corresponds 1:1 to a method on the mcpmock.Control or
+# mcpmock.InstanceControl Go interface (ADR-015). TestControlSurfaceParity enforces it.
+openapi: 3.1.0
+
+info:
+  title: mcpmock Control API
+  version: 0.1.0
+  description: |
+    Runtime mutation and inspection of a running mcpmock process.
+
+    **Security.** This API can regenerate catalogues, forge credentials and read a journal
+    containing full request bodies. It binds to loopback or a unix socket by default; binding to
+    a non-loopback address without a bearer token is refused at startup (MOCK-104.5).
+
+    **Transport.** The same handler is served over TCP and over a unix domain socket. In stdio
+    mode only the socket exists, because stdin/stdout belong to the protocol (ADR-011).
+  license:
+    name: See repository LICENSE
+
+servers:
+  - url: http://127.0.0.1:9091/v1
+    description: Default loopback control listener
+  - url: http+unix://%2Frun%2Fmcpmock.sock/v1
+    description: Unix socket (stdio mode)
+
+security:
+  - bearerAuth: []
+  - {}   # permitted only when bound to loopback or a unix socket
+
+tags:
+  - name: process
+  - name: instances
+  - name: catalogue
+  - name: faults
+  - name: notifications
+  - name: streams
+  - name: sessions
+  - name: auth
+  - name: journal
+
+paths:
+
+  # ---------------------------------------------------------------- process
+  /openapi.yaml:
+    get:
+      tags: [process]
+      operationId: getOpenAPI
+      summary: This document, as served by the running process.
+      responses:
+        "200": { description: OK, content: { application/yaml: { schema: { type: string } } } }
+
+  /seed:
+    get:
+      tags: [process]
+      operationId: getSeed
+      summary: Effective root seed (MOCK-704).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [seed, source]
+                properties:
+                  seed:   { type: integer, format: uint64 }
+                  source: { type: string, enum: [flag, scenario, random] }
+
+  /health:
+    get:
+      tags: [process]
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  # -------------------------------------------------------------- instances
+  /instances:
+    get:
+      tags: [instances]
+      operationId: listInstances
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/InstanceInfo" } }
+    post:
+      tags: [instances]
+      operationId: addInstance
+      summary: Add a logical instance at runtime (MOCK-103.4).
+      parameters: [ { $ref: "#/components/parameters/IdempotencyKey" } ]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/InstanceSpec" } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/InstanceInfo" } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /instances/{name}:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [instances]
+      operationId: getInstance
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/InstanceInfo" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [instances]
+      operationId: removeInstance
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /instances/{name}/era:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    put:
+      tags: [instances]
+      operationId: setEra
+      summary: Switch protocol era without restart (MOCK-303.4, MOCK-702.4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [era]
+              properties:
+                era: { type: string, enum: [modern, legacy, dual, probe] }
+      responses:
+        "200":
+          description: Applied
+          content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  # -------------------------------------------------------------- catalogue
+  /instances/{name}/catalogue:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    patch:
+      tags: [catalogue]
+      operationId: patchCatalogue
+      summary: Apply drift patches (MOCK-227).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: array, items: { $ref: "#/components/schemas/CataloguePatch" } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /instances/{name}/catalogue:regenerate:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [catalogue]
+      operationId: regenerateCatalogue
+      summary: Replace generation parameters (MOCK-221, MOCK-702.1).
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/CatalogueParams" } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  # ----------------------------------------------------------------- faults
+  /instances/{name}/faults:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [faults]
+      operationId: listFaults
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/FaultStatus" } }
+    put:
+      tags: [faults]
+      operationId: setFaults
+      summary: Replace the whole rule list (MOCK-702.3).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: array, items: { $ref: "#/components/schemas/FaultRule" } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /instances/{name}/faults/{ruleId}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - { $ref: "#/components/parameters/RuleId" }
+    patch:
+      tags: [faults]
+      operationId: patchFault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+                trigger: { $ref: "#/components/schemas/FaultTrigger" }
+                action:  { $ref: "#/components/schemas/FaultAction" }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [faults]
+      operationId: deleteFault
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /instances/{name}/faults/{ruleId}:arm:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - { $ref: "#/components/parameters/RuleId" }
+    post:
+      tags: [faults]
+      operationId: armFault
+      summary: Arm a control-triggered fault for the next N matches (§5 preamble).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                times: { type: integer, minimum: 1, default: 1 }
+      responses:
+        "200": { description: Armed, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------- notifications
+  /instances/{name}/notifications:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [notifications]
+      operationId: fireNotification
+      summary: Fire a notification to matching subscribers (MOCK-253.1).
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/NotificationSpec" } }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivered: { type: integer, description: subscriptions matched }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------- streams
+  /instances/{name}/streams:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [streams]
+      operationId: listStreams
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/StreamInfo" } }
+
+  /instances/{name}/streams:close:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [streams]
+      operationId: closeStreams
+      summary: Close selected streams gracefully or abruptly (MOCK-254.4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [graceful, abrupt, halfClose, stall] }
+                selector:
+                  type: object
+                  properties:
+                    subscriptionId: { type: string }
+                    sessionId:      { type: string }
+                    method:         { type: string }
+                    all:            { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { closed: { type: integer } } }
+
+  # --------------------------------------------------------------- sessions
+  /instances/{name}/sessions:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SessionInfo" } }
+
+  /instances/{name}/sessions/{sessionId}:invalidate:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - name: sessionId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [sessions]
+      operationId: invalidateSession
+      summary: Expire a legacy session mid-flight (MOCK-305.1).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inFlight: { type: string, enum: [complete, fail], default: complete }
+      responses:
+        "200": { description: Invalidated }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ------------------------------------------------------------------- auth
+  /instances/{name}/credentials:rotate:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    post:
+      tags: [auth]
+      operationId: rotateCredentials
+      summary: Rotate accepted credentials / signing keys (MOCK-406, MOCK-702.5).
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/CredentialSpec" } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { $ref: "#/components/schemas/Applied" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------- journal
+  /instances/{name}/journal:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [journal]
+      operationId: getJournal
+      summary: Query the request journal (MOCK-602).
+      parameters:
+        - { name: method,        in: query, schema: { type: string }, description: glob }
+        - { name: name,          in: query, schema: { type: string }, description: primitive name glob }
+        - { name: transport,     in: query, schema: { type: string, enum: [http, stdio] } }
+        - { name: era,           in: query, schema: { type: string } }
+        - { name: since,         in: query, schema: { type: string, format: date-time } }
+        - { name: until,         in: query, schema: { type: string, format: date-time } }
+        - { name: correlationId, in: query, schema: { type: string } }
+        - { name: traceId,       in: query, schema: { type: string } }
+        - { name: chain,         in: query, schema: { type: string } }
+        - { name: status,        in: query, schema: { type: integer } }
+        - { name: faultRule,     in: query, schema: { type: string } }
+        - { name: limit,         in: query, schema: { type: integer, default: 100, maximum: 10000 } }
+        - { name: after,         in: query, schema: { type: integer, format: uint64 }, description: seq cursor }
+        - { name: format,        in: query, schema: { type: string, enum: [json, ndjson] } }
+        - { name: follow,        in: query, schema: { type: boolean, default: false } }
+        - { name: consistent,    in: query, schema: { type: boolean, default: false },
+            description: "Briefly quiesce writers for a torn-read-free snapshot (ADR-005)." }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JournalPage" }
+            application/x-ndjson:
+              schema: { type: string, description: one JournalRecord per line }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [journal]
+      operationId: clearJournal
+      responses:
+        "204": { description: Cleared }
+
+  /instances/{name}/journal/correlations:
+    parameters: [ { $ref: "#/components/parameters/Name" } ]
+    get:
+      tags: [journal]
+      operationId: getCorrelations
+      summary: MRTR chains grouped by mock-side requestState identity (MOCK-605).
+      parameters:
+        - { name: chain, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Correlation" } }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Token from MCPMOCK_CONTROL_TOKEN or --control-token-file. Compared in constant time.
+        Required whenever the listener is not loopback and not a unix socket.
+
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$" }
+    RuleId:
+      name: ruleId
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: X-Mcpmock-Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+      description: Repeating a request with the same key within 5 minutes returns the first result.
+
+  responses:
+    NotFound:
+      description: Named resource does not exist.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: State conflict (duplicate name or mount path, listener limit).
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ValidationFailed:
+      description: Body failed schema or semantic validation.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: Mutation rate exceeded (ADR-014).
+      headers:
+        Retry-After: { schema: { type: integer }, description: seconds }
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+
+    # ------------------------------------------------------ error catalogue
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code. See the error catalogue table below.
+          enum:
+            - not_found
+            - already_exists
+            - conflict
+            - validation_failed
+            - rate_limited
+            - unauthorized
+            - forbidden
+            - unsupported
+            - closed
+            - internal
+        message: { type: string, description: Human-readable, never contains credentials. }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              pointer: { type: string, description: JSON Pointer into the submitted body }
+              keyword: { type: string, description: failing JSON Schema keyword }
+              reason:  { type: string }
+        retryable: { type: boolean }
+        retryAfterSeconds: { type: integer }
+
+    Applied:
+      type: object
+      required: [generation]
+      properties:
+        generation: { type: integer, format: uint64, description: new Snapshot.Gen (ADR-014) }
+        appliedAt:  { type: string, format: date-time }
+
+    Health:
+      type: object
+      required: [status, instances, uptimeSeconds]
+      properties:
+        status:        { type: string, enum: [ok, degraded] }
+        instances:     { type: integer }
+        openStreams:   { type: integer }
+        uptimeSeconds: { type: number }
+        version:       { type: string }
+        seed:          { type: integer, format: uint64 }
+        safeMode:      { type: boolean }
+        hostileInstances: { type: array, items: { type: string } }
+
+    InstanceInfo:
+      type: object
+      required: [name, mountPath, era, generation, hostile]
+      properties:
+        name:          { type: string }
+        mountPath:     { type: string }
+        url:           { type: string }
+        era:           { type: string }
+        generation:    { type: integer, format: uint64 }
+        catalogueGeneration: { type: integer, format: uint64 }
+        counts:
+          type: object
+          properties:
+            tools: { type: integer }
+            prompts: { type: integer }
+            resources: { type: integer }
+            resourceTemplates: { type: integer }
+        journal:
+          type: object
+          properties:
+            records: { type: integer }
+            dropped: { type: integer }
+            bytes:   { type: integer }
+        openStreams:   { type: integer }
+        sessions:      { type: integer }
+        authMode:      { type: string, enum: [none, bearer-static, oauth-resource-server] }
+        hostile:       { type: boolean, description: ADR-018 corpus gate state }
+
+    InstanceSpec:
+      description: Subset of the scenario document describing one instance. See scenario.schema.json.
+      type: object
+      additionalProperties: true
+
+    CatalogueParams:
+      type: object
+      additionalProperties: true
+    CataloguePatch:
+      type: object
+      required: [target, field]
+      properties:
+        target: { type: string, description: primitive name or glob }
+        kind:   { type: string, enum: [tool, prompt, resource, resourceTemplate] }
+        field:  { type: string, enum: [description, inputSchema, outputSchema, annotations, icons, title] }
+        value:  { description: arbitrary JSON, emitted verbatim }
+        emitNotification: { type: boolean, default: false }
+
+    FaultRule:
+      type: object
+      required: [id, action]
+      properties:
+        id:      { type: string }
+        enabled: { type: boolean, default: true }
+        when:    { $ref: "#/components/schemas/FaultSelector" }
+        trigger: { $ref: "#/components/schemas/FaultTrigger" }
+        action:  { $ref: "#/components/schemas/FaultAction" }
+        once:    { type: boolean, default: false }
+        stopPropagation: { type: boolean, default: false }
+    FaultSelector:
+      type: object
+      additionalProperties: false
+      properties:
+        instance:  { type: string }
+        method:    { type: string }
+        name:      { type: string }
+        era:       { type: string }
+        phase:     { type: string, enum: [connection, request, response, stream] }
+        mrtrRound: { type: integer }
+        principal: { type: object, properties: { scope: { type: string }, subject: { type: string } } }
+    FaultTrigger:
+      type: object
+      additionalProperties: false
+      properties:
+        probability: { type: number, minimum: 0, maximum: 1 }
+        count:
+          type: object
+          properties:
+            first:   { type: integer }
+            afterN:  { type: integer }
+            everyNth:{ type: integer }
+        armed: { type: boolean }
+    FaultAction:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [latency, transport, protocol, size, error, content, corpus, restart, page]
+      additionalProperties: true
+    FaultStatus:
+      allOf:
+        - $ref: "#/components/schemas/FaultRule"
+        - type: object
+          properties:
+            matchCount: { type: integer }
+            fireCount:  { type: integer }
+            armedRemaining: { type: integer }
+            lastFiredAt: { type: string, format: date-time }
+
+    NotificationSpec:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum:
+                [tools/list_changed, prompts/list_changed, resources/list_changed, resources/updated] }
+        uris: { type: array, items: { type: string }, description: for resources/updated }
+        subscriptionId: { type: string, description: target one subscription; default all matching }
+        params: { description: arbitrary JSON merged into the notification params }
+
+    CredentialSpec:
+      type: object
+      properties:
+        staticTokens: { type: array, items: { type: string }, writeOnly: true }
+        rotateSigningKey: { type: boolean }
+        invalidatePrevious: { type: boolean, default: true }
+        tokenTTLSeconds: { type: integer }
+      description: |
+        Token values are write-only and are never returned by any read operation.
+
+    StreamInfo:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [request-sse, listen, legacy-get] }
+        subscriptionId: { type: string }
+        sessionId: { type: string }
+        openedAt: { type: string, format: date-time }
+        framesSent: { type: integer }
+        framesDropped: { type: integer }
+
+    SessionInfo:
+      type: object
+      properties:
+        id: { type: string }
+        era: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        valid: { type: boolean }
+        replayBufferSize: { type: integer }
+
+    JournalPage:
+      type: object
+      required: [records]
+      properties:
+        records: { type: array, items: { $ref: "#/components/schemas/JournalRecord" } }
+        nextAfter: { type: integer, format: uint64 }
+        total: { type: integer }
+        dropped: { type: integer, description: records lost to overflow before this page }
+
+    JournalRecord:
+      description: See data-model.md §3. schemaVersion is versioned independently of this API.
+      type: object
+      additionalProperties: true
+      required: [schemaVersion, seq, instance, wallTime, monoNs, transport]
+      properties:
+        schemaVersion: { type: integer }
+        seq: { type: integer, format: uint64 }
+        instance: { type: string }
+        generation: { type: integer, format: uint64 }
+
+    Correlation:
+      type: object
+      required: [chainId, rounds]
+      properties:
+        chainId: { type: string }
+        rounds: { type: integer }
+        seqs: { type: array, items: { type: integer, format: uint64 } }
+        initialId: { description: raw JSON-RPC id }
+        retryIds: { type: array, items: {} }
+        retryIdsDistinct: { type: boolean }
+        outcome: { type: string, enum: [completed, pending, rejected, abandoned] }
+        rejectionReason:
+          type: string
+          enum: [malformed, tampered, cross_instance, expired, cross_principal, cross_request, replayed]
+        elapsedMs: { type: number }
+
+# ---------------------------------------------------------------------------
+# ERROR CATALOGUE  (required by the contract standard: code, meaning, retry)
+# ---------------------------------------------------------------------------
+# code               HTTP  meaning                                            retry?
+# not_found          404   named instance/rule/session/stream does not exist  no
+# already_exists     409   instance name or mount path collides               no
+# conflict           409   state forbids the mutation (own-listener limit)    no
+# validation_failed  422   body failed JSON Schema or semantic validation     no
+# rate_limited       429   >100 mutations/s (ADR-014); Retry-After set        YES
+# unauthorized       401   missing/invalid bearer token                       no
+# forbidden          403   operation refused in this mode (e.g. safe-mode)    no
+# unsupported        501   operation not available for this transport/mode    no
+# closed             503   server is shutting down                            YES, elsewhere
+# internal           500   bug in mcpmock; the response includes no detail    YES once
+#
+# Idempotency: PUT and PATCH are idempotent by definition. POST :verb operations
+# accept X-Mcpmock-Idempotency-Key and de-duplicate within 5 minutes.
+# Timeouts: clients SHOULD use 5 s for reads and 10 s for mutations; ?follow=true
+# streams have no timeout and are closed by the client.
+# Versioning: the path prefix is /v1. Additive changes are made in place; a breaking
+# change introduces /v2 and /v1 is supported for two minor releases.

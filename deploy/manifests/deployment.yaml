@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpmock
+  namespace: mcpmock-test
+  labels:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/part-of: mcpmock
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcpmock
+      app.kubernetes.io/instance: mcpmock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcpmock
+        app.kubernetes.io/instance: mcpmock
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: mcpmock
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Validate the mounted scenario before the server starts (deployment.md §3.3).
+        - name: validate-scenario
+          image: mcpmock:dev-local
+          imagePullPolicy: IfNotPresent
+          args:
+            - validate
+            - /etc/mcpmock/scenario.yaml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: scenario
+              mountPath: /etc/mcpmock
+              readOnly: true
+      containers:
+        - name: mcpmock
+          image: mcpmock:dev-local
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --path
+            - /etc/mcpmock/scenario.yaml
+            - --transport
+            - http
+            - --listen
+            - 0.0.0.0:8080
+            - --metrics-listen
+            - :9090
+            - --log-level
+            - info
+            - --no-control
+          ports:
+            - name: mcp
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  containerName: mcpmock
+                  resource: limits.memory
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 1
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: scenario
+              mountPath: /etc/mcpmock
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: scenario
+          configMap:
+            name: mcpmock-scenario
+            items:
+              - key: scenario.yaml
+                path: scenario.yaml
+        - name: tmp
+          emptyDir: {}

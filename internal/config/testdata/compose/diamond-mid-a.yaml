@@ -1,0 +1,16 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: diamond-mid-a
+extends:
+  - diamond-leaf.yaml
+spec:
+  # mid-a sets count=2 (overridden by mid-b) and a nameTemplate that no other
+  # branch touches, so the nameTemplate proves mid-a's contribution survives
+  # while count proves mid-b (rightmost) wins the shared field.
+  catalogue:
+    tools:
+      count: 2
+      nameTemplate: from-mid-a-{{i}}
+  discover:
+    instructions: from mid-a

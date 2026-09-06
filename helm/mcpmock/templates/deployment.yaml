@@ -1,0 +1,183 @@
+{{- include "mcpmock.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcpmock.fullname" . }}
+  labels:
+    {{- include "mcpmock.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ .Values.updateStrategy.type }}
+    {{- if eq .Values.updateStrategy.type "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml .Values.updateStrategy.rollingUpdate | nindent 6 }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mcpmock.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcpmock.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Roll the pod when the rendered scenario changes.
+        {{- if not .Values.scenario.configMapName }}
+        checksum/scenario: {{ include (print $.Template.BasePath "/configmap-scenario.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "mcpmock.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.scenario.validateOnStart }}
+      initContainers:
+        # Validate the mounted scenario before the server starts, so a bad
+        # document fails the rollout with a readable message (deployment.md §3.3).
+        - name: validate-scenario
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - validate
+            - /etc/mcpmock/{{ .Values.scenario.key }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 250m, memory: 128Mi }
+          volumeMounts:
+            - name: scenario
+              mountPath: /etc/mcpmock
+              readOnly: true
+      {{- end }}
+      containers:
+        - name: mcpmock
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --path
+            - /etc/mcpmock/{{ .Values.scenario.key }}
+            - --transport
+            - http
+            - --listen
+            - 0.0.0.0:{{ .Values.mcp.port }}
+            - --metrics-listen
+            - :{{ .Values.metrics.port }}
+            - --log-level
+            - {{ .Values.logLevel | quote }}
+            {{- if .Values.seed }}
+            - --seed
+            - {{ .Values.seed | quote }}
+            {{- end }}
+            {{- if .Values.control.enabled }}
+            - --control-listen
+            - 0.0.0.0:{{ .Values.control.port }}
+            - --control-token-file
+            - /etc/mcpmock/secrets/{{ .Values.control.tokenSecretKey }}
+            {{- else }}
+            - --no-control
+            {{- end }}
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- if .Values.control.enabled }}
+            - name: control
+              containerPort: {{ .Values.control.port }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- if .Values.gomemlimit.enabled }}
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  containerName: mcpmock
+                  resource: limits.memory
+            {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.tracing.serviceName | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          resources:
+            {{- include "mcpmock.resources" . | nindent 12 }}
+          volumeMounts:
+            - name: scenario
+              mountPath: /etc/mcpmock
+              readOnly: true
+            # /tmp is the only writable path (rootfs is read-only).
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.control.enabled }}
+            - name: control-token
+              mountPath: /etc/mcpmock/secrets
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: scenario
+          configMap:
+            name: {{ include "mcpmock.scenarioConfigMapName" . }}
+            items:
+              - key: {{ .Values.scenario.key }}
+                path: {{ .Values.scenario.key }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.control.enabled }}
+        - name: control-token
+          secret:
+            secretName: {{ .Values.control.tokenSecretName }}
+            items:
+              - key: {{ .Values.control.tokenSecretKey }}
+                path: {{ .Values.control.tokenSecretKey }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

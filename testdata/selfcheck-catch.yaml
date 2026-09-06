@@ -1,0 +1,23 @@
+apiVersion: mcpmock.dev/v1alpha1
+kind: Scenario
+metadata:
+  name: selfcheck-catch
+  description: >-
+    A scenario that turns on switches.selfCheck AND switches.omitResultType, so
+    every result loses its resultType discriminator and the self-check
+    (MOCK-201.4) must catch it: the mock rejects its own malformed response with
+    -32603 rather than emitting it. Proves selfCheck is settable from a file and
+    actually rejects.
+spec:
+  era: modern
+  transport:
+    kinds: [http]
+    http:
+      path: /mcp
+      listener: shared
+  switches:
+    selfCheck: true
+    omitResultType: true
+  journal:
+    enabled: true
+    bodies: full

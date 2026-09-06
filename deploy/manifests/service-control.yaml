@@ -1,0 +1,25 @@
+# The control Service is only created when the control API is enabled. In the
+# `default` profile control is DISABLED (loopback-only posture), so this file is
+# provided for reference and is NOT part of the default apply. To use it, deploy
+# the control-token Secret first and pass --control-token-file (see the chart's
+# control.enabled path and secret-control-token.example.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpmock-control
+  namespace: mcpmock-test
+  labels:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+    app.kubernetes.io/part-of: mcpmock
+    app.kubernetes.io/component: control
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mcpmock
+    app.kubernetes.io/instance: mcpmock
+  ports:
+    - name: control
+      port: 9091
+      targetPort: control
+      protocol: TCP
